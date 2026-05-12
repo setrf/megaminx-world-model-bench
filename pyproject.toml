@@ -1,0 +1,18 @@
+[project]
+name = "megaminx"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "verifiers>=0.1.14",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["environments/megaminx_solver"]
+testpaths = ["tests"]

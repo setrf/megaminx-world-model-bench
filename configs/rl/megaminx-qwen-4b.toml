@@ -1,0 +1,15 @@
+model = "Qwen/Qwen3.5-4B"
+max_steps = 100
+batch_size = 128
+rollouts_per_example = 8
+
+[sampling]
+max_tokens = 1024
+temperature = 0.7
+
+[[env]]
+id = "setrf/megaminx-solver"
+
+[env.args]
+split = "easy"
+num_examples = 500
