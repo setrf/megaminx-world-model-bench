@@ -2,11 +2,22 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
+import json
 
 from megaminx_solver import load_environment
-from megaminx_solver.megaminx_solver import solved_reward
+from megaminx_solver.megaminx_solver import (
+    action_gated_dense_reward,
+    action_taken,
+    first_rotate_correct,
+    first_rotate_direction_correct,
+    first_rotate_face_correct,
+    reward_style,
+    rotate_call_count,
+    solved_reward,
+)
 from megaminx_solver.simulator import (
     CORNER_COUNT,
+    DIRECTIONS,
     EDGE_COUNT,
     FACES,
     POSITIONS_PER_FACE,
@@ -16,6 +27,7 @@ from megaminx_solver.simulator import (
     generate_scramble,
     inverse_moves,
 )
+from verifiers.types import AssistantMessage
 
 
 def sticker_counter(puzzle: MegaminxPuzzle) -> Counter[str]:
@@ -98,3 +110,127 @@ def test_depth1_split_and_prompt_contract() -> None:
     first_prompt = "\n".join(message["content"] for message in rows[0]["prompt"])
     assert "one-turn scramble" in first_prompt
     assert rows[0]["answer"] not in first_prompt
+
+
+def test_named_split_depth_ranges_and_metadata() -> None:
+    for split, expected in {
+        "depth1": {1},
+        "easy": {1, 2, 3},
+        "medium": {4, 5, 6},
+        "hard": {7, 8, 9, 10},
+    }.items():
+        env = load_environment(split=split, num_examples=len(expected) * 2, seed=14)
+        rows = [dict(row) for row in env.get_dataset()]
+        assert {row["scramble_depth"] for row in rows} == expected
+        for row in rows:
+            prompt = "\n".join(message["content"] for message in row["prompt"])
+            assert row["answer"] not in prompt
+            assert row["reward_style"] == "dense"
+            assert row["prompt_style"] == "default"
+
+
+def test_action_gated_reward_requires_rotate_and_tracks_first_move() -> None:
+    async def run() -> None:
+        env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=15,
+            reward_style="action_gated_dense",
+            prompt_style="action_first",
+        )
+        row = dict(env.get_dataset()[0])
+        prompt = "\n".join(message["content"] for message in row["prompt"])
+        assert "must be a rotate tool call" in prompt
+        assert "Output no explanation before the first rotate tool call" in prompt
+
+        state = {"task": row}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        assert await reward_style(state) == 1.0
+        assert await action_gated_dense_reward(state) == 0.0
+        assert await action_taken(state) == 0.0
+        assert rollout.initial_sticker_accuracy == rollout.puzzle.sticker_accuracy()
+        assert rollout.initial_piece_accuracy == rollout.puzzle.piece_accuracy()
+
+        correct = rollout.inverse_solution[0]
+        wrong = next(
+            (face, direction)
+            for face in FACES
+            for direction in DIRECTIONS
+            if (face, direction) != correct
+        )
+        await env.rotate(*wrong, rollout)
+        assert await action_taken(state) == 1.0
+        assert await first_rotate_correct(state) == 0.0
+        assert await first_rotate_face_correct(state) in {0.0, 1.0}
+        assert await first_rotate_direction_correct(state) in {0.0, 1.0}
+        assert 0.0 <= await action_gated_dense_reward(state) <= 0.4
+
+    asyncio.run(run())
+
+
+def test_action_gated_inverse_solution_gets_full_reward() -> None:
+    async def run() -> None:
+        env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=16,
+            reward_style="action_gated_dense",
+            prompt_style="action_first",
+        )
+        row = dict(env.get_dataset()[0])
+        state = {"task": row}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        for face, direction in rollout.inverse_solution:
+            await env.rotate(face, direction, rollout)
+        assert rollout.solved()
+        assert await action_gated_dense_reward(state) == 1.0
+        assert await first_rotate_correct(state) == 1.0
+
+    asyncio.run(run())
+
+
+def test_json_text_tool_action_fallback_executes_rotate() -> None:
+    async def run() -> None:
+        env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=17,
+            reward_style="action_gated_dense",
+            prompt_style="action_first",
+        )
+        row = dict(env.get_dataset()[0])
+        state = {"task": row}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        face, direction = rollout.inverse_solution[0]
+        action_json = json.dumps(
+            [
+                {
+                    "name": "rotate",
+                    "parameters": {"face": face, "direction": direction},
+                }
+            ]
+        )
+        message = AssistantMessage(reasoning_content=action_json)
+        state["trajectory"] = [{"completion": [message]}]
+        assert await env.no_tools_called(state) is False
+        response = await env.env_response([message], state)
+        assert response[0].role == "tool"
+        assert rollout.solved()
+        assert await rotate_call_count(state) == 1.0
+        assert await action_gated_dense_reward(state) == 1.0
+
+    asyncio.run(run())
+
+
+def test_tool_schema_and_metadata_path() -> None:
+    env = load_environment(split="depth1", num_examples=1)
+    tool_defs = {tool.name: tool.parameters for tool in env.tool_defs}
+    assert tool_defs["rotate"]["required"] == ["face", "direction"]
+    assert set(tool_defs["rotate"]["properties"]) == {"face", "direction"}
+    assert tool_defs["inspect"]["required"] == ["face"]
+    assert tool_defs["finish"]["required"] == []
+    assert env.env_args["reward_style"] == "dense"
+    assert env.env_args["prompt_style"] == "default"

@@ -7,6 +7,7 @@ from typing import Any, Sequence
 
 from datasets import Dataset
 import verifiers as vf
+from verifiers.types import ToolMessage
 
 from .simulator import (
     DEFAULT_TOPOLOGY,
@@ -28,9 +29,12 @@ The puzzle has twelve faces labeled A through L. A solved face contains only its
 own label. Centers identify the target color for each face and do not move.
 Corner and edge strings show the sticker colors currently visible on that face.
 
-Use rotate to change the puzzle, inspect only when you need more state, and call
-finish only when the puzzle is solved or when you are giving up.
+Use rotate to change the puzzle. Inspect only when you need more state. Call
+finish only after the puzzle is solved or when you are giving up.
 """
+
+REWARD_STYLES = {"dense", "action_gated_dense"}
+PROMPT_STYLES = {"default", "action_first"}
 
 SPLIT_DEPTHS = {
     "depth1": (1, 1),
@@ -56,11 +60,18 @@ class RolloutMegaminx:
     inverse_solution: list[Move]
     scramble_depth: int
     move_budget: int
+    reward_style: str
+    initial_sticker_accuracy: float
+    initial_piece_accuracy: float
     move_count: int = 0
     illegal_moves: int = 0
     tool_calls: int = 0
+    rotate_call_count: int = 0
+    inspect_call_count: int = 0
+    finish_call_count: int = 0
     finished: bool = False
     last_move: str = "none"
+    first_rotate: Move | None = None
     history: list[str] = field(default_factory=list)
 
     def solved(self) -> bool:
@@ -146,6 +157,77 @@ async def tool_call_count(state: vf.State) -> float:
     return float(rollout.tool_calls if rollout else 0)
 
 
+async def rotate_call_count(state: vf.State) -> float:
+    rollout = _rollout_from_state(state)
+    return float(rollout.rotate_call_count if rollout else 0)
+
+
+async def inspect_call_count(state: vf.State) -> float:
+    rollout = _rollout_from_state(state)
+    return float(rollout.inspect_call_count if rollout else 0)
+
+
+async def finish_call_count(state: vf.State) -> float:
+    rollout = _rollout_from_state(state)
+    return float(rollout.finish_call_count if rollout else 0)
+
+
+async def action_taken(state: vf.State) -> float:
+    rollout = _rollout_from_state(state)
+    return float(bool(rollout and rollout.move_count > 0))
+
+
+async def first_rotate_correct(state: vf.State) -> float:
+    rollout = _rollout_from_state(state)
+    if not rollout or not rollout.first_rotate or not rollout.inverse_solution:
+        return 0.0
+    return float(rollout.first_rotate == rollout.inverse_solution[0])
+
+
+async def first_rotate_face_correct(state: vf.State) -> float:
+    rollout = _rollout_from_state(state)
+    if not rollout or not rollout.first_rotate or not rollout.inverse_solution:
+        return 0.0
+    return float(rollout.first_rotate[0] == rollout.inverse_solution[0][0])
+
+
+async def first_rotate_direction_correct(state: vf.State) -> float:
+    rollout = _rollout_from_state(state)
+    if not rollout or not rollout.first_rotate or not rollout.inverse_solution:
+        return 0.0
+    return float(rollout.first_rotate[1] == rollout.inverse_solution[0][1])
+
+
+async def reward_style(state: vf.State) -> float:
+    rollout = _rollout_from_state(state)
+    return float(bool(rollout and rollout.reward_style == "action_gated_dense"))
+
+
+async def initial_sticker_accuracy(state: vf.State) -> float:
+    rollout = _rollout_from_state(state)
+    return rollout.initial_sticker_accuracy if rollout else 0.0
+
+
+async def initial_piece_accuracy(state: vf.State) -> float:
+    rollout = _rollout_from_state(state)
+    return rollout.initial_piece_accuracy if rollout else 0.0
+
+
+async def action_gated_dense_reward(state: vf.State) -> float:
+    rollout = _rollout_from_state(state)
+    if not rollout:
+        return 0.0
+    if rollout.solved():
+        return 1.0
+    if rollout.move_count == 0:
+        return 0.0
+
+    sticker_delta = rollout.puzzle.sticker_accuracy() - rollout.initial_sticker_accuracy
+    piece_delta = rollout.puzzle.piece_accuracy() - rollout.initial_piece_accuracy
+    progress_delta = 0.7 * sticker_delta + 0.3 * piece_delta
+    return max(0.0, min(0.4, progress_delta))
+
+
 class MegaminxEnv(vf.StatefulToolEnv):
     def __init__(self, topology: MegaminxTopology | None = None, **kwargs: Any):
         self.topology = topology or DEFAULT_TOPOLOGY
@@ -161,12 +243,17 @@ class MegaminxEnv(vf.StatefulToolEnv):
         inverse_solution = _decode_moves(task["inverse_solution"])
         puzzle = MegaminxPuzzle.solved(self.topology)
         puzzle.apply_moves(scramble)
+        initial_sticker = puzzle.sticker_accuracy()
+        initial_piece = puzzle.piece_accuracy()
         state["megaminx"] = RolloutMegaminx(
             puzzle=puzzle,
             scramble=scramble,
             inverse_solution=inverse_solution,
             scramble_depth=int(task["scramble_depth"]),
             move_budget=int(task["move_budget"]),
+            reward_style=task.get("reward_style", "dense"),
+            initial_sticker_accuracy=initial_sticker,
+            initial_piece_accuracy=initial_piece,
         )
 
     def update_tool_args(
@@ -187,11 +274,40 @@ class MegaminxEnv(vf.StatefulToolEnv):
     async def env_response(
         self, messages: vf.Messages, state: vf.State, **kwargs: Any
     ) -> vf.Messages:
-        tool_messages = await super().env_response(messages, state, **kwargs)
+        parsed_action = _parse_message_tool_action(messages[-1])
+        if parsed_action and not getattr(messages[-1], "tool_calls", None):
+            tool_name, tool_args = parsed_action
+            tool_args = self.update_tool_args(tool_name, tool_args, messages, state, **kwargs)
+            try:
+                tool_messages = [await self.call_tool(tool_name, tool_args, "text-tool-0")]
+            except Exception as error:
+                rollout = _rollout_from_state(state)
+                if rollout is not None:
+                    rollout.illegal_moves += 1
+                tool_messages = [
+                    ToolMessage(
+                        role="tool",
+                        content=self.error_formatter(error),
+                        tool_call_id="text-tool-0",
+                    )
+                ]
+        else:
+            tool_messages = await super().env_response(messages, state, **kwargs)
         rollout = _rollout_from_state(state)
         if rollout and (rollout.solved() or rollout.finished or rollout.exhausted()):
             state["final_env_response"] = tool_messages
         return tool_messages
+
+    @vf.stop
+    async def no_tools_called(self, state: vf.State) -> bool:
+        if len(state["trajectory"]) == 0:
+            return False
+        last_message = state["trajectory"][-1]["completion"][-1]
+        is_assistant_message = getattr(last_message, "role", None) == "assistant"
+        has_tool_calls = bool(getattr(last_message, "tool_calls", None))
+        if not is_assistant_message or has_tool_calls:
+            return False
+        return _parse_message_tool_action(last_message) is None
 
     async def rotate(self, face: str, direction: str, rollout: RolloutMegaminx) -> str:
         """Rotate one Megaminx face.
@@ -204,6 +320,7 @@ class MegaminxEnv(vf.StatefulToolEnv):
             Updated puzzle observation after the move.
         """
         rollout.tool_calls += 1
+        rollout.rotate_call_count += 1
         if rollout.finished:
             return "The rollout is already finished.\n" + rollout.observation()
         if rollout.exhausted():
@@ -218,6 +335,8 @@ class MegaminxEnv(vf.StatefulToolEnv):
         rollout.puzzle.apply_move(face, direction)
         rollout.move_count += 1
         rollout.last_move = move_to_text((face, direction))
+        if rollout.first_rotate is None:
+            rollout.first_rotate = (face, direction)
         rollout.history.append(rollout.last_move)
         if rollout.solved() or rollout.exhausted():
             rollout.finished = True
@@ -233,6 +352,7 @@ class MegaminxEnv(vf.StatefulToolEnv):
             Current puzzle observation without rotating any face.
         """
         rollout.tool_calls += 1
+        rollout.inspect_call_count += 1
         face = face.strip().upper()
         if face == "ALL":
             return rollout.observation()
@@ -253,6 +373,7 @@ class MegaminxEnv(vf.StatefulToolEnv):
             Final puzzle observation.
         """
         rollout.tool_calls += 1
+        rollout.finish_call_count += 1
         rollout.finished = True
         verdict = "Solved." if rollout.solved() else "Not solved."
         return verdict + "\n" + rollout.observation()
@@ -265,7 +386,10 @@ def load_environment(
     num_examples: int = 200,
     seed: int = 42,
     max_turns: int | None = None,
+    reward_style: str = "dense",
+    prompt_style: str = "default",
 ) -> vf.Environment:
+    _validate_styles(reward_style, prompt_style)
     dataset = build_dataset(
         split=split,
         min_depth=min_depth,
@@ -273,21 +397,10 @@ def load_environment(
         num_examples=num_examples,
         seed=seed,
         max_turns=max_turns,
+        reward_style=reward_style,
+        prompt_style=prompt_style,
     )
-    rubric = vf.Rubric(
-        funcs=[
-            solved_reward,
-            sticker_accuracy,
-            piece_accuracy,
-            efficiency_if_solved,
-            illegal_move_count,
-            move_count,
-            solved_rate,
-            scramble_depth,
-            tool_call_count,
-        ],
-        weights=[0.60, 0.25, 0.10, 0.05, 0.0, 0.0, 0.0, 0.0, 0.0],
-    )
+    rubric = _build_rubric(reward_style)
     global_max_turns = _resolve_global_max_turns(split, min_depth, max_depth, max_turns)
     return MegaminxEnv(
         dataset=dataset,
@@ -302,6 +415,8 @@ def load_environment(
             "num_examples": num_examples,
             "seed": seed,
             "max_turns": max_turns,
+            "reward_style": reward_style,
+            "prompt_style": prompt_style,
         },
     )
 
@@ -313,7 +428,10 @@ def build_dataset(
     num_examples: int,
     seed: int,
     max_turns: int | None,
+    reward_style: str = "dense",
+    prompt_style: str = "default",
 ) -> Dataset:
+    _validate_styles(reward_style, prompt_style)
     if num_examples <= 0:
         raise ValueError("num_examples must be positive")
     min_depth, max_depth = _resolve_depths(split, min_depth, max_depth)
@@ -339,6 +457,8 @@ def build_dataset(
                 puzzle=puzzle,
                 scramble=scramble,
                 inverse_solution=inverse_solution,
+                reward_style=reward_style,
+                prompt_style=prompt_style,
             )
         )
     return Dataset.from_list(rows)
@@ -352,11 +472,13 @@ def _build_row(
     puzzle: MegaminxPuzzle,
     scramble: Sequence[Move],
     inverse_solution: Sequence[Move],
+    reward_style: str,
+    prompt_style: str,
 ) -> dict[str, Any]:
     prompt = [
         {
             "role": "user",
-            "content": _build_prompt(index, split, depth, move_budget, puzzle),
+            "content": _build_prompt(index, split, depth, move_budget, puzzle, prompt_style),
         }
     ]
     task = {
@@ -368,6 +490,8 @@ def _build_row(
         "move_budget": move_budget,
         "scramble": _encode_moves(scramble),
         "inverse_solution": _encode_moves(inverse_solution),
+        "reward_style": reward_style,
+        "prompt_style": prompt_style,
     }
     return {
         **task,
@@ -417,26 +541,145 @@ def _resolve_global_max_turns(
     return min(32, max(8, 2 * resolved_max_depth + 6))
 
 
+def _build_rubric(reward_style_name: str) -> vf.Rubric:
+    metric_funcs = [
+        illegal_move_count,
+        move_count,
+        solved_rate,
+        scramble_depth,
+        tool_call_count,
+        rotate_call_count,
+        inspect_call_count,
+        finish_call_count,
+        action_taken,
+        first_rotate_correct,
+        first_rotate_face_correct,
+        first_rotate_direction_correct,
+        reward_style,
+        initial_sticker_accuracy,
+        initial_piece_accuracy,
+    ]
+    if reward_style_name == "dense":
+        return vf.Rubric(
+            funcs=[
+                solved_reward,
+                sticker_accuracy,
+                piece_accuracy,
+                efficiency_if_solved,
+                *metric_funcs,
+            ],
+            weights=[0.60, 0.25, 0.10, 0.05, *([0.0] * len(metric_funcs))],
+        )
+    return vf.Rubric(
+        funcs=[
+            action_gated_dense_reward,
+            sticker_accuracy,
+            piece_accuracy,
+            efficiency_if_solved,
+            *metric_funcs,
+        ],
+        weights=[1.0, 0.0, 0.0, 0.0, *([0.0] * len(metric_funcs))],
+    )
+
+
+def _validate_styles(reward_style: str, prompt_style: str) -> None:
+    if reward_style not in REWARD_STYLES:
+        expected = ", ".join(sorted(REWARD_STYLES))
+        raise ValueError(f"reward_style must be one of {expected}, got {reward_style!r}")
+    if prompt_style not in PROMPT_STYLES:
+        expected = ", ".join(sorted(PROMPT_STYLES))
+        raise ValueError(f"prompt_style must be one of {expected}, got {prompt_style!r}")
+
+
+def _parse_text_tool_action(content: Any) -> tuple[str, dict[str, Any]] | None:
+    text = _content_to_text(content).strip()
+    if not text:
+        return None
+    for start in (index for index, char in enumerate(text) if char in "[{"):
+        try:
+            parsed, _ = json.JSONDecoder().raw_decode(text[start:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, list) and parsed:
+            parsed = parsed[0]
+        if not isinstance(parsed, dict):
+            continue
+        name = parsed.get("name") or parsed.get("tool") or parsed.get("tool_name")
+        args = parsed.get("parameters") or parsed.get("arguments") or parsed.get("args")
+        if name is None and {"face", "direction"} <= set(parsed):
+            name = "rotate"
+            args = {"face": parsed["face"], "direction": parsed["direction"]}
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except json.JSONDecodeError:
+                args = {}
+        if isinstance(name, str) and isinstance(args, dict):
+            return name, args
+    return None
+
+
+def _parse_message_tool_action(message: Any) -> tuple[str, dict[str, Any]] | None:
+    return _parse_text_tool_action(getattr(message, "content", None)) or _parse_text_tool_action(
+        getattr(message, "reasoning_content", None)
+    )
+
+
+def _content_to_text(content: Any) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict):
+                text = part.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+            else:
+                text = getattr(part, "text", None)
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(parts)
+    return str(content)
+
+
 def _build_prompt(
     index: int,
     split: str,
     depth: int,
     move_budget: int,
     puzzle: MegaminxPuzzle,
+    prompt_style: str,
 ) -> str:
-    return "\n".join(
-        [
-            f"Example: {split}-{index:05d}",
-            f"Scramble depth: {depth}",
-            f"Move budget: {move_budget}",
-            "Goal: solve the Megaminx so every face contains only its own label.",
-            "Legal moves: rotate any face A-L with direction cw or ccw.",
-            "Use rotate(face, direction), inspect(face), and finish().",
-            _curriculum_hint(depth),
-            "Initial observation:",
-            puzzle.render_net(),
-        ]
-    )
+    lines = [
+        f"Example: {split}-{index:05d}",
+        f"Scramble depth: {depth}",
+        f"Move budget: {move_budget}",
+        "Goal: solve the Megaminx so every face contains only its own label.",
+        "Legal moves: rotate any face A-L with direction cw or ccw.",
+        "Use rotate(face, direction), inspect(face), and finish().",
+        _curriculum_hint(depth),
+    ]
+    if prompt_style == "action_first":
+        lines.extend(
+            [
+                "Action-first instruction: the first assistant turn must be a rotate tool call.",
+                "Plain text before a rotate tool call receives zero reward and ends the rollout.",
+                "Output no explanation before the first rotate tool call.",
+            ]
+        )
+        if depth == 1:
+            lines.append(
+                "For this one-turn scramble, inspect is unnecessary; choose exactly one rotate call."
+            )
+        else:
+            lines.append("Inspect only after making at least one rotate call.")
+    lines.extend(["Initial observation:", puzzle.render_net()])
+    return "\n".join(lines)
 
 
 def _curriculum_hint(depth: int) -> str:
