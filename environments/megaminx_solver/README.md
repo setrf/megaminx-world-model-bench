@@ -27,14 +27,16 @@ shown in the prompt.
 
 | Arg | Type | Default | Description |
 | --- | --- | --- | --- |
-| `split` | str | `"train"` | `train`, `eval`, `easy`, `medium`, `hard`, or `eval_*` bands. |
+| `split` | str | `"train"` | `depth1`, `train_depth1`, `easy`, `medium`, `hard`, `eval`, or `eval_*` bands. |
 | `min_depth` | int | `1` | Minimum scramble depth for custom splits. |
 | `max_depth` | int | `8` | Maximum scramble depth for custom splits. |
 | `num_examples` | int | `200` | Number of generated examples. |
 | `seed` | int | `42` | Deterministic scramble seed. |
 | `max_turns` | int or null | `null` | Override per-task move budget and global turn cap. |
 
-Default move budget is `2 * scramble_depth + 4`, capped at `32`.
+Default move budget is `2 * scramble_depth + 4`, capped at `32`. The
+environment-level turn cap is also reduced for shallow curricula so first RL
+runs do not spend most tokens inspecting.
 
 ## Reward
 
@@ -61,6 +63,12 @@ Evaluate an explicit band:
 
 ```bash
 prime eval run megaminx-solver -m Qwen/Qwen3.5-4B -a '{"split":"easy","num_examples":30}' -n 30 -r 3
+```
+
+Run the depth-1 on-ramp intended for the first RL pass:
+
+```bash
+prime eval run megaminx-solver -m Qwen/Qwen3.5-4B -a '{"split":"depth1","num_examples":30}' -n 10 -r 3
 ```
 
 Push privately after validation:

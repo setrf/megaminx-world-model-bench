@@ -87,3 +87,14 @@ def test_invalid_tool_args_are_non_crashing_and_penalized() -> None:
         assert rollout.puzzle.stickers == before
 
     asyncio.run(run())
+
+
+def test_depth1_split_and_prompt_contract() -> None:
+    env = load_environment(split="depth1", num_examples=5, seed=13)
+    rows = [dict(row) for row in env.get_dataset()]
+    assert {row["scramble_depth"] for row in rows} == {1}
+    assert {row["move_budget"] for row in rows} == {6}
+    assert env.max_turns == 8
+    first_prompt = "\n".join(message["content"] for message in rows[0]["prompt"])
+    assert "one-turn scramble" in first_prompt
+    assert rows[0]["answer"] not in first_prompt

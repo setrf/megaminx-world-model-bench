@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from random import Random
-from typing import Any
+from typing import Any, Sequence
 
 from datasets import Dataset
 import verifiers as vf
@@ -25,16 +25,25 @@ from .simulator import (
 SYSTEM_PROMPT = """You are solving a text Megaminx.
 
 The puzzle has twelve faces labeled A through L. A solved face contains only its
-own label. Use the rotate and inspect tools to change or inspect the state.
-Call finish only when the puzzle is solved or when you are giving up.
+own label. Centers identify the target color for each face and do not move.
+Corner and edge strings show the sticker colors currently visible on that face.
+
+Use rotate to change the puzzle, inspect only when you need more state, and call
+finish only when the puzzle is solved or when you are giving up.
 """
 
 SPLIT_DEPTHS = {
+    "depth1": (1, 1),
+    "train_depth1": (1, 1),
+    "eval_depth1": (1, 1),
     "easy": (1, 3),
+    "train_easy": (1, 3),
     "eval_easy": (1, 3),
     "medium": (4, 6),
+    "train_medium": (4, 6),
     "eval_medium": (4, 6),
     "hard": (7, 10),
+    "train_hard": (7, 10),
     "eval_hard": (7, 10),
     "eval": (1, 10),
 }
@@ -279,7 +288,7 @@ def load_environment(
         ],
         weights=[0.60, 0.25, 0.10, 0.05, 0.0, 0.0, 0.0, 0.0, 0.0],
     )
-    global_max_turns = max_turns if max_turns is not None else 32
+    global_max_turns = _resolve_global_max_turns(split, min_depth, max_depth, max_turns)
     return MegaminxEnv(
         dataset=dataset,
         system_prompt=SYSTEM_PROMPT,
@@ -396,6 +405,18 @@ def _resolve_depths(split: str, min_depth: int, max_depth: int) -> tuple[int, in
     return min_depth, max_depth
 
 
+def _resolve_global_max_turns(
+    split: str,
+    min_depth: int,
+    max_depth: int,
+    max_turns: int | None,
+) -> int:
+    if max_turns is not None:
+        return max_turns
+    _, resolved_max_depth = _resolve_depths(split, min_depth, max_depth)
+    return min(32, max(8, 2 * resolved_max_depth + 6))
+
+
 def _build_prompt(
     index: int,
     split: str,
@@ -409,10 +430,24 @@ def _build_prompt(
             f"Scramble depth: {depth}",
             f"Move budget: {move_budget}",
             "Goal: solve the Megaminx so every face contains only its own label.",
+            "Legal moves: rotate any face A-L with direction cw or ccw.",
             "Use rotate(face, direction), inspect(face), and finish().",
+            _curriculum_hint(depth),
             "Initial observation:",
             puzzle.render_net(),
         ]
+    )
+
+
+def _curriculum_hint(depth: int) -> str:
+    if depth == 1:
+        return (
+            "Curriculum hint: this is a one-turn scramble. Exactly one legal rotate "
+            "action solves it if you identify the scrambled face and inverse direction."
+        )
+    return (
+        "Curriculum hint: the puzzle was scrambled by a short sequence of face turns; "
+        "reverse progress is measured by solvedness, sticker accuracy, and piece accuracy."
     )
 
 
