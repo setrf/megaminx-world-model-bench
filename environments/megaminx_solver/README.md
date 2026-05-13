@@ -1,57 +1,73 @@
 # megaminx-solver
 
 [![Prime Hub](https://img.shields.io/badge/Prime%20Hub-setrf%2Fmegaminx--solver-blue)](https://app.primeintellect.ai/dashboard/environments/setrf/megaminx-solver)
-[![Latest eval](https://img.shields.io/badge/Latest%20eval-v0.2.20%20stage%20direction-16a34a)](https://app.primeintellect.ai/dashboard/evaluations/y78em945ey7fb8ijmxbej5mg)
-[![Best baseline](https://img.shields.io/badge/Best%20baseline-v0.2.17%20match%20table-0f766e)](https://app.primeintellect.ai/dashboard/evaluations/k16letr5pyhopqwu0e5seshs)
-[![Indexed eval](https://img.shields.io/badge/Indexed%20eval-v0.2.18-2563eb)](https://app.primeintellect.ai/dashboard/evaluations/gnudftur8j76ndbokfpas7jq)
+[![Latest env](https://img.shields.io/badge/env-v0.2.29-0f766e)](https://app.primeintellect.ai/dashboard/environments/setrf/megaminx-solver)
+[![Native heldout](https://img.shields.io/badge/native%20step40-0.807-16a34a)](https://app.primeintellect.ai/dashboard/training/b6qh3e36i2poqghq5eum97dd)
+[![Breakthrough eval](https://img.shields.io/badge/v0.2.22%2035B-0.929-2563eb)](https://app.primeintellect.ai/dashboard/evaluations/vse6uoo8c9y156svyyv41qll)
 
 Trainable multi-turn Megaminx environment for Prime Intellect Verifiers. The
-agent receives a compact text facelet net, calls tools to rotate or inspect the
-puzzle, and is rewarded for solving short deterministic scrambles efficiently.
+model sees a compact text facelet net, acts through tools, and receives a
+deterministic reward from a persistent puzzle simulator.
 
 ## Overview
 
-- **Environment ID**: `megaminx-solver`
-- **Hub target**: `setrf/megaminx-solver`
-- **Type**: multi-turn, stateful tool environment
-- **Tags**: `multi-turn`, `tool-env`, `spatial-reasoning`, `megaminx`, `rl`, `train`, `eval`
+| Item | Value |
+| --- | --- |
+| Environment id | `megaminx-solver` |
+| Hub target | `setrf/megaminx-solver` |
+| Current package | `setrf/megaminx-solver@0.2.29` |
+| Type | `vf.StatefulToolEnv` |
+| Tags | `multi-turn`, `tool-env`, `spatial-reasoning`, `megaminx`, `rl`, `eval` |
 
 ## Task
 
-Each rollout starts from a generated Megaminx scramble. Faces are labeled `A`
-through `L`; a solved face contains only its own label. The model can call:
+Each rollout starts from a deterministic generated scramble. Faces are labeled
+`A` through `L`; a solved face contains only its own label. The model can call:
 
-- `rotate(face, direction)`: rotate a face clockwise or counterclockwise.
-- `inspect(face)`: inspect one face or `all`.
-- `finish()`: end the rollout.
+| Tool | Arguments | Meaning |
+| --- | --- | --- |
+| `rotate` | `face: A-L`, `direction: cw|ccw` | Apply one face turn |
+| `inspect` | `face: A-L|all` | Observe a face or full net |
+| `finish` | none | End the rollout |
 
-The inverse scramble is stored in task metadata for verification and is not
-shown in the prompt.
+The scramble and inverse solution are stored in task metadata for tests and
+metrics, but they are not printed directly in the prompt.
 
-## Environment Arguments
+## Public API
 
-| Arg | Type | Default | Description |
-| --- | --- | --- | --- |
-| `split` | str | `"train"` | `depth1`, `train_depth1`, `easy`, `medium`, `hard`, `eval`, or `eval_*` bands. |
-| `min_depth` | int | `1` | Minimum scramble depth for custom splits. |
-| `max_depth` | int | `8` | Maximum scramble depth for custom splits. |
-| `num_examples` | int | `200` | Number of generated examples. |
-| `seed` | int | `42` | Deterministic scramble seed. |
-| `max_turns` | int or null | `null` | Override the Verifiers turn cap. Also sets move budget unless `move_budget` is provided. |
-| `move_budget` | int or null | `null` | Optional puzzle-rotation budget shown in the prompt and enforced by the environment. |
-| `reward_style` | str | `"dense"` | `dense`, `action_gated_dense`, `action_gated_curriculum`, `action_gated_overlap`, `action_gated_direction`, or `action_gated_exact_direction`. |
-| `prompt_style` | str | `"default"` | `default`, `action_first`, JSON action styles, staged JSON styles, or native tool styles. |
-| `allow_text_tool_actions` | bool or null | `null` | Auto-enables JSON text fallback for JSON prompt styles and disables it for native tool styles unless overridden. |
+```python
+load_environment(
+    split="train",
+    min_depth=1,
+    max_depth=8,
+    num_examples=200,
+    seed=42,
+    max_turns=None,
+    move_budget=None,
+    reward_style="dense",
+    prompt_style="default",
+    allow_text_tool_actions=None,
+)
+```
 
-Default move budget is `2 * scramble_depth + 4`, capped at `32`. The
-environment-level turn cap is also reduced for shallow curricula so first RL
-runs do not spend most tokens inspecting. When overriding both values for custom
-configs, keep `move_budget <= max_turns` so the prompt does not advertise more
-rotations than the Verifiers turn cap can service.
+Named splits:
 
-## Reward
+| Split | Depths | Intended use |
+| --- | ---: | --- |
+| `depth1`, `train_depth1`, `eval_depth1` | 1 | First RL and one-turn heldout |
+| `easy`, `train_easy`, `eval_easy` | 1-3 | Short-scramble generalization |
+| `medium`, `train_medium`, `eval_medium` | 4-6 | Mid-horizon eval |
+| `hard`, `train_hard`, `eval_hard` | 7-10 | Hard eval |
+| `eval` | 1-10 | Broad eval |
+| `train` | custom, default 1-8 | General curriculum |
 
-The main scalar reward is:
+Default move budget is `2 * scramble_depth + 4`, capped at `32`, unless
+`max_turns` or `move_budget` is supplied. For the staged depth-1 experiments we
+use `max_turns=2` and `move_budget=1`.
+
+## Rewards
+
+Default dense reward:
 
 ```text
 0.60 * solved
@@ -60,88 +76,142 @@ The main scalar reward is:
 + 0.05 * efficiency_if_solved
 ```
 
-For the current v0.2.20 staged hosted RL path, use
-`reward_style="action_gated_exact_direction"` with
-`prompt_style="stage_face_hint_direction_json_action"`, `max_turns=2`, and
-`move_budget=1` for depth-1 training. This keeps no-rotate rollouts at `0.0`,
-gives solved states `1.0`, gives small credit for the right face with the wrong
-direction, and does not reward right direction on the wrong face. This staged
-prompt intentionally reveals the correct face for depth-1 scrambles and limits
-the JSON action menu to that face's `cw`/`ccw` choices, so training isolates
-direction learning. The latest held-out staged eval scored `0.579` reward with
-`0.504` solved/direction accuracy, `1.000` face accuracy, and zero env errors or
-illegal moves. It is not a final naturalistic eval prompt and rejects
-non-depth-1 splits. The underlying candidate-strip prompt still appends derived
-affected faces, affected face summaries, static neighbor rings, static sorted
-candidate neighbor sets, an index guide for edge/corner sticker flow, and
-candidate-local moved strips. It does not print precomputed overlap counts,
-answer candidates, the scramble, or the inverse solution.
-For a smoother first on-ramp, `reward_style="action_gated_overlap"` rewards how
-much the chosen face's neighbor ring overlaps the initially affected faces,
-then adds smaller credit for exact face/direction correctness.
-`action_gated_dense` remains available for stricter evals where only positive
-state progress should score.
+Supported reward styles:
 
-JSON action prompt styles intentionally allow a text JSON fallback because
-current Qwen chat-completions evals often place tool calls in text or reasoning
-fields. Native prompt styles (`native_action`, `topology_native_tool`,
-`sensor_native_tool`, `sensor_match_native_tool`) keep that fallback disabled by
-default for renderer/TITO-compatible trajectories.
+- `dense`
+- `action_gated_dense`
+- `action_gated_curriculum`
+- `action_gated_overlap`
+- `action_gated_direction`
+- `action_gated_exact_direction`
+- `action_gated_binary_direction`
+- `action_gated_strict_shaped_direction`
 
-Tracked metrics include `illegal_move_count`, `move_count`, `solved_rate`,
-`scramble_depth`, `tool_call_count`, `action_taken`, `first_rotate_correct`,
-`first_rotate_face_correct`, `first_rotate_direction_correct`,
-`first_rotate_neighbor_overlap`, `reward_style`, `initial_sticker_accuracy`,
-`initial_piece_accuracy`, and Verifiers' built-in tool metrics. The
-`reward_style` metric is encoded as `5.0` for `action_gated_exact_direction`.
+The strict eval gate is `action_gated_binary_direction`: reward is `1.0` only
+for one clean first `rotate` equal to the inverse move, and `0.0` otherwise.
+Clean means exactly one action attempt, exactly one rotate, no inspect/finish,
+no illegal move, no parse/call error, and no protocol violation.
 
-## Quickstart
+The current hosted RL on-ramp uses
+`action_gated_strict_shaped_direction`: solved exact action gives `1.0`, a
+clean wrong-direction same-face action gives partial credit around `0.40`, and
+other valid rotations receive smaller direction/progress credit. This keeps
+rollouts learnable while the heldout acceptance metric remains binary.
+
+`reward_style` is exported as a numeric metric: binary direction is `6.0`,
+strict shaped direction is `7.0`.
+
+## Prompt Styles
+
+The main current styles are:
+
+- `stage_solve_direction_flow_native_tool`: native tool-call training/probe
+  lane. Use `allow_text_tool_actions=false`.
+- `stage_solve_direction_flow_json_action`: served chat-completions eval lane.
+  Use `allow_text_tool_actions=true` for Qwen JSON/private text fallback.
+- `default`, `action_first`, topology/sensor JSON styles, and older staged
+  prompts remain available for ablations and history.
+
+Depth-1 staged prompts intentionally reveal the affected face and isolate the
+binary direction bit. They do not print the scramble, inverse solution, answer
+candidate, winner, overlap count, or precomputed best action.
+
+## Metrics
+
+Tracked metrics include:
+
+```text
+illegal_move_count
+move_count
+solved_rate
+scramble_depth
+tool_call_count
+native_tool_call_count
+text_tool_action_count
+private_text_action_count
+tool_parse_error_count
+tool_call_error_count
+protocol_violation_count
+rotate_call_count
+inspect_call_count
+finish_call_count
+action_taken
+first_rotate_correct
+first_rotate_face_correct
+first_rotate_direction_correct
+first_rotate_neighbor_overlap
+reward_style
+initial_sticker_accuracy
+initial_piece_accuracy
+```
+
+v0.2.29 hardens the private reasoning path: structured non-action private
+metadata such as reasoning summaries is ignored, while malformed private JSON
+action attempts are counted as private parse errors.
+
+## Validation
+
+Install the current Hub package:
 
 ```bash
-prime env install setrf/megaminx-solver@0.2.20
-prime eval run setrf/megaminx-solver@0.2.20 -m Qwen/Qwen3.5-35B-A3B \
+prime env install setrf/megaminx-solver@0.2.29 --plain
+```
+
+Run local tests:
+
+```bash
+uv run pytest -q
+```
+
+Latest result: `59 passed`.
+
+Quick served eval smoke:
+
+```bash
+prime eval run setrf/megaminx-solver@0.2.29 -m Qwen/Qwen3.5-9B \
   --api-client-type openai_chat_completions \
   -S '{"tool_choice":{"type":"function","function":{"name":"rotate"}}}' \
-  -a '{"split":"eval_depth1","num_examples":240,"seed":1042,"max_turns":2,"move_budget":1,"reward_style":"action_gated_exact_direction","prompt_style":"stage_face_hint_direction_json_action","allow_text_tool_actions":true}' \
-  -n 240 -r 1 -t 48 -T 0.7 -A
+  -a '{"split":"eval_depth1","num_examples":5,"seed":1042,"max_turns":2,"move_budget":1,"reward_style":"action_gated_binary_direction","prompt_style":"stage_solve_direction_flow_json_action","allow_text_tool_actions":true}' \
+  -n 5 -r 1 -t 48 -T 0.7 -A --plain
 ```
 
-Latest validation: [v0.2.20 staged direction eval](https://app.primeintellect.ai/dashboard/evaluations/y78em945ey7fb8ijmxbej5mg)
-used `eval_depth1`, 240 examples, seed `1042`, and produced reward `0.579`,
-solved/direction `0.504`, face `1.000`, illegal moves `0`, and env errors `0`.
-
-Evaluate an explicit band:
+Run the native hosted RL config used for the step-40 result:
 
 ```bash
-prime eval run setrf/megaminx-solver -m Qwen/Qwen3.5-35B-A3B \
-  --api-client-type openai_chat_completions \
-  -S '{"tool_choice":{"type":"function","function":{"name":"rotate"}}}' \
-  -a '{"split":"easy","num_examples":30,"max_turns":8,"reward_style":"action_gated_curriculum","prompt_style":"sensor_match_json_action"}' \
-  -n 30 -r 1 -t 64 -T 0.7 -A
+prime train configs/rl/megaminx-depth1-qwen-9b-solve-flow-shaped-v028-native-noeval.toml --yes --plain
 ```
 
-Run the depth-1 on-ramp intended for the first RL pass:
+Run the native heldout probe shape:
 
 ```bash
-prime eval run setrf/megaminx-solver@0.2.20 -m Qwen/Qwen3.5-35B-A3B \
-  --api-client-type openai_chat_completions \
-  -S '{"tool_choice":{"type":"function","function":{"name":"rotate"}}}' \
-  -a '{"split":"eval_depth1","num_examples":240,"seed":1042,"max_turns":2,"move_budget":1,"reward_style":"action_gated_exact_direction","prompt_style":"stage_face_hint_direction_json_action","allow_text_tool_actions":true}' \
-  -n 240 -r 1 -t 48 -T 0.7 -A
+prime train configs/rl/megaminx-v028-native-heldout-probe-step40.toml --yes --plain
 ```
 
-Historical v0.2.19 candidate-strip smoke eval:
+## Current Evidence
 
-```bash
-prime eval run setrf/megaminx-solver -m Qwen/Qwen3.5-35B-A3B \
-  --api-client-type openai_chat_completions \
-  -S '{"tool_choice":{"type":"function","function":{"name":"rotate"}}}' \
-  -a '{"split":"depth1","num_examples":120,"max_turns":2,"move_budget":1,"reward_style":"action_gated_exact_direction","prompt_style":"sensor_candidate_strips_json_action","allow_text_tool_actions":true}' \
-  -n 120 -r 1 -t 48 -T 0.7 -A
-```
+The v0.2.22 environment/prompt breakthrough moved 35B depth-1 direction solving
+from [`0.504`](https://app.primeintellect.ai/dashboard/evaluations/dgu4mymqqk5sy97l3kvusjxu)
+to [`0.929`](https://app.primeintellect.ai/dashboard/evaluations/vse6uoo8c9y156svyyv41qll).
 
-Push publicly after validation:
+The v0.2.28/v0.2.29 RL state is more modest. Native TITO heldout probes on the
+same 240-example depth-1 set show:
 
-```bash
-prime env push megaminx-solver --visibility PUBLIC
-```
+| Probe | Checkpoint | Reward/solved | Note |
+| --- | --- | ---: | --- |
+| [`gwfcyfztn8ahpwceu9n63rzd`](https://app.primeintellect.ai/dashboard/training/gwfcyfztn8ahpwceu9n63rzd) | base | `0.7819` | native calls clean |
+| [`eg68wcx3ym12mhvtku4l7g5g`](https://app.primeintellect.ai/dashboard/training/eg68wcx3ym12mhvtku4l7g5g) | step 30 | `0.7700` | regressed |
+| [`b6qh3e36i2poqghq5eum97dd`](https://app.primeintellect.ai/dashboard/training/b6qh3e36i2poqghq5eum97dd) | step 40 | `0.8071` | modest positive |
+
+The original `+30pp` trained-checkpoint acceptance target was not met. The
+honest current result is: environment released and hardened, native-tool
+measurement path established, modest positive step-40 RL signal, and a clear
+next experiment needed for larger gains.
+
+## Hub Caveat
+
+`prime env push megaminx-solver --path ./environments --owner setrf --visibility PUBLIC --plain`
+successfully pushes versions, but the existing Hub record still reports
+`PRIVATE` through `prime env status` and `prime env list`. Flip visibility in the
+owner web UI for environment id `ozde27sytxjkc3wm83zv4e2c`; do not delete and
+recreate the environment unless losing version/eval/training continuity is
+acceptable.

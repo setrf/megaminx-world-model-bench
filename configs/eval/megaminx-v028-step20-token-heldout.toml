@@ -1,0 +1,16 @@
+# Hosted token-client probe for the v0.2.28 native-tool training lane.
+# Deliberately omits enable_thinking: the token completions client rejects it.
+
+[[eval]]
+env_id = "setrf/megaminx-solver"
+model = "Qwen/Qwen3.5-9B:sotz5v6zrnorx1l6xbkdiby9"
+api_client_type = "openai_chat_completions_token"
+eval_name = "megaminx-v028-step20-token-heldout"
+num_examples = 40
+rollouts_per_example = 1
+max_tokens = 48
+temperature = 0.7
+sampling_args = { tool_choice = { type = "function", function = { name = "rotate" } } }
+timeout_minutes = 120
+
+env_args = { split = "eval_depth1", num_examples = 40, seed = 1042, max_turns = 2, move_budget = 1, reward_style = "action_gated_binary_direction", prompt_style = "stage_solve_direction_flow_native_tool", allow_text_tool_actions = false }

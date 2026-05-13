@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 import json
+from pathlib import Path
+import tomllib
 
 from megaminx_solver import load_environment
 from megaminx_solver.megaminx_solver import (
@@ -10,15 +12,23 @@ from megaminx_solver.megaminx_solver import (
     action_gated_dense_reward,
     action_gated_direction_reward,
     action_gated_exact_direction_reward,
+    action_gated_binary_direction_reward,
+    action_gated_strict_shaped_direction_reward,
     action_gated_overlap_reward,
     action_taken,
     first_rotate_correct,
     first_rotate_direction_correct,
     first_rotate_face_correct,
     first_rotate_neighbor_overlap,
+    native_tool_call_count,
+    private_text_action_count,
+    protocol_violation_count,
     reward_style,
     rotate_call_count,
     solved_reward,
+    text_tool_action_count,
+    tool_call_error_count,
+    tool_parse_error_count,
 )
 from megaminx_solver.simulator import (
     CORNER_COUNT,
@@ -72,6 +82,28 @@ def test_scramble_inverse_solves() -> None:
     assert not puzzle.is_solved()
     puzzle.apply_moves(inverse_moves(scramble))
     assert puzzle.is_solved()
+
+
+def test_cw_ccw_strip_flow_matches_prompt_definition_for_all_faces() -> None:
+    for face in FACES:
+        ring = DEFAULT_TOPOLOGY.neighbor_rings[face]
+        for direction in DIRECTIONS:
+            puzzle = MegaminxPuzzle.solved(DEFAULT_TOPOLOGY)
+            puzzle.apply_move(face, direction)
+            for side, destination in enumerate(ring):
+                expected_source = (
+                    ring[(side - 1) % len(ring)]
+                    if direction == "cw"
+                    else ring[(side + 1) % len(ring)]
+                )
+                strip_colors = [
+                    puzzle.stickers[position]
+                    for position in DEFAULT_TOPOLOGY.side_strip(face, destination)
+                ]
+                assert strip_colors == [expected_source] * len(strip_colors)
+
+            puzzle.apply_moves(inverse_moves([(face, direction)]))
+            assert puzzle.is_solved()
 
 
 def test_load_environment_and_scripted_inverse_solution() -> None:
@@ -263,6 +295,34 @@ def test_sensor_native_tool_prompt_style_uses_native_tools_without_json_contract
     assert row["answer"] not in prompt
 
 
+def test_stage_direction_flow_native_tool_prompt_uses_reasoned_native_tool_contract() -> None:
+    for prompt_style, table_header in (
+        ("stage_direction_flow_native_tool", "Direction flow table for face"),
+        ("stage_solve_direction_flow_native_tool", "Solve-direction flow table for face"),
+    ):
+        env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=41,
+            reward_style="action_gated_binary_direction",
+            prompt_style=prompt_style,
+            move_budget=1,
+        )
+        row = dict(env.get_dataset()[0])
+        prompt = "\n".join(message["content"] for message in row["prompt"])
+
+        assert env.env_args["allow_text_tool_actions"] is False
+        assert "Native tool mode: compare the direction-flow table, then call rotate directly." in prompt
+        assert "You may reason internally" in prompt
+        assert table_header in prompt
+        assert "/no_think" not in prompt
+        assert "Return exactly one JSON object" not in prompt
+        assert "Choose exactly one legal action from this menu" not in prompt
+        assert row["answer"] not in prompt
+        assert row["scramble"] not in prompt
+        assert row["inverse_solution"] not in prompt
+
+
 def test_native_tool_prompt_styles_do_not_use_json_contract_or_leak_metadata() -> None:
     cases = {
         "native_action": {
@@ -341,6 +401,18 @@ def test_allow_text_tool_actions_defaults_by_prompt_style() -> None:
         assert env.env_args["allow_text_tool_actions"] is True
     stage_env = load_environment(split="depth1", prompt_style="stage_face_hint_direction_json_action")
     assert stage_env.env_args["allow_text_tool_actions"] is True
+    flow_env = load_environment(split="depth1", prompt_style="stage_direction_flow_json_action")
+    assert flow_env.env_args["allow_text_tool_actions"] is True
+    reasoned_flow_env = load_environment(
+        split="depth1",
+        prompt_style="stage_direction_flow_reasoned_json_action",
+    )
+    assert reasoned_flow_env.env_args["allow_text_tool_actions"] is True
+    solve_flow_env = load_environment(
+        split="depth1",
+        prompt_style="stage_solve_direction_flow_json_action",
+    )
+    assert solve_flow_env.env_args["allow_text_tool_actions"] is True
 
     for prompt_style in (
         "default",
@@ -349,8 +421,15 @@ def test_allow_text_tool_actions_defaults_by_prompt_style() -> None:
         "topology_native_tool",
         "sensor_native_tool",
         "sensor_match_native_tool",
+        "stage_direction_flow_native_tool",
+        "stage_solve_direction_flow_native_tool",
     ):
-        env = load_environment(prompt_style=prompt_style)
+        kwargs = (
+            {"split": "depth1"}
+            if prompt_style in {"stage_direction_flow_native_tool", "stage_solve_direction_flow_native_tool"}
+            else {}
+        )
+        env = load_environment(prompt_style=prompt_style, **kwargs)
         assert env.env_args["allow_text_tool_actions"] is False
 
 
@@ -480,6 +559,7 @@ def test_stage_face_hint_direction_json_action_prompt_is_staged_and_two_choice()
     assert f"Only choose rotate actions on face {hinted_face}." in prompt
     assert "Candidate-local moved strips:" in prompt
     assert prompt.count('"tool": "rotate"') == len(DIRECTIONS)
+    assert '{"tool":"rotate","args":{"face":"A","direction":"cw"}}' not in prompt
     for direction in DIRECTIONS:
         assert json.dumps(
             {"tool": "rotate", "args": {"face": hinted_face, "direction": direction}}
@@ -498,19 +578,208 @@ def test_stage_face_hint_direction_json_action_prompt_is_staged_and_two_choice()
     assert row["inverse_solution"] not in prompt
 
 
-def test_stage_face_hint_direction_json_action_rejects_non_depth1_splits() -> None:
-    try:
-        load_environment(
-            split="easy",
-            num_examples=3,
-            reward_style="action_gated_exact_direction",
-            prompt_style="stage_face_hint_direction_json_action",
+def test_stage_direction_flow_json_action_prompt_lists_local_flow_without_answer() -> None:
+    env = load_environment(
+        split="depth1",
+        num_examples=1,
+        seed=41,
+        reward_style="action_gated_exact_direction",
+        prompt_style="stage_direction_flow_json_action",
+        move_budget=1,
+    )
+    row = dict(env.get_dataset()[0])
+    prompt = "\n".join(message["content"] for message in row["prompt"])
+    puzzle = MegaminxPuzzle.solved(DEFAULT_TOPOLOGY)
+    puzzle.apply_moves([(item["face"], item["direction"]) for item in json.loads(row["scramble"])])
+    hinted_face = json.loads(row["inverse_solution"])[0]["face"]
+    ring = DEFAULT_TOPOLOGY.neighbor_rings[hinted_face]
+
+    assert f"Direction flow table for face {hinted_face}:" in prompt
+    assert "Ring order: " + " ".join(ring) in prompt
+    assert "destination | before | current | source_if_scramble_cw | source_if_scramble_ccw" in prompt
+    assert "current matches source_if_scramble_cw" in prompt
+    assert "current matches source_if_scramble_ccw" in prompt
+    assert prompt.count('"tool": "rotate"') == len(DIRECTIONS)
+    assert '{"tool":"rotate","args":{"face":"A","direction":"cw"}}' not in prompt
+    for side, destination in enumerate(ring):
+        previous = ring[(side - 1) % len(ring)]
+        next_face = ring[(side + 1) % len(ring)]
+        strip = [
+            puzzle.stickers[position]
+            for position in DEFAULT_TOPOLOGY.side_strip(hinted_face, destination)
+        ]
+        assert (
+            f"{destination} | before={destination * 3} | current={''.join(strip)} | "
+            f"source_if_scramble_cw={previous * 3} | source_if_scramble_ccw={next_face * 3}"
+        ) in prompt
+    assert "Candidate neighbor sets for face matching:" not in prompt
+    assert "Direction index guide:" not in prompt
+    assert "Candidate-local moved strips:" not in prompt
+    for forbidden in ("correct_direction", "target_direction", "matched_source", "winner", "best"):
+        assert forbidden not in prompt.lower()
+    assert "Highest-overlap face candidates:" not in prompt
+    assert "Neighbor-overlap counts:" not in prompt
+    assert row["answer"] not in prompt
+    assert row["scramble"] not in prompt
+    assert row["inverse_solution"] not in prompt
+
+
+def test_stage_direction_flow_reasoned_json_action_prompt_allows_private_reasoning() -> None:
+    env = load_environment(
+        split="depth1",
+        num_examples=1,
+        seed=41,
+        reward_style="action_gated_binary_direction",
+        prompt_style="stage_direction_flow_reasoned_json_action",
+        move_budget=1,
+    )
+    row = dict(env.get_dataset()[0])
+    prompt = "\n".join(message["content"] for message in row["prompt"])
+
+    assert env.env_args["allow_text_tool_actions"] is True
+    assert "/no_think" not in prompt
+    assert "Direct-action mode: do not reason" not in prompt
+    assert "Reasoned direct-action mode: compare the direction-flow table before choosing." in prompt
+    assert "You may reason internally" in prompt
+    assert "Return exactly one JSON object copied from the legal-action menu below." in prompt
+    assert "Direction flow table for face" in prompt
+    assert "destination | before | current | source_if_scramble_cw | source_if_scramble_ccw" in prompt
+    assert prompt.count('"tool": "rotate"') == len(DIRECTIONS)
+    assert "Candidate neighbor sets for face matching:" not in prompt
+    assert "Direction index guide:" not in prompt
+    assert "Candidate-local moved strips:" not in prompt
+    assert row["answer"] not in prompt
+    assert row["scramble"] not in prompt
+    assert row["inverse_solution"] not in prompt
+
+
+def test_stage_solve_direction_flow_json_action_prompt_lists_solve_columns() -> None:
+    env = load_environment(
+        split="depth1",
+        num_examples=1,
+        seed=41,
+        reward_style="action_gated_binary_direction",
+        prompt_style="stage_solve_direction_flow_json_action",
+        move_budget=1,
+    )
+    row = dict(env.get_dataset()[0])
+    prompt = "\n".join(message["content"] for message in row["prompt"])
+    puzzle = MegaminxPuzzle.solved(DEFAULT_TOPOLOGY)
+    puzzle.apply_moves([(item["face"], item["direction"]) for item in json.loads(row["scramble"])])
+    hinted_face = json.loads(row["inverse_solution"])[0]["face"]
+    ring = DEFAULT_TOPOLOGY.neighbor_rings[hinted_face]
+
+    assert f"Solve-direction flow table for face {hinted_face}:" in prompt
+    assert "Ring order: " + " ".join(ring) in prompt
+    assert (
+        "destination | solved_target | current | "
+        "expected_current_if_solve_cw | expected_current_if_solve_ccw"
+    ) in prompt
+    assert "choose cw only if current matches expected_current_if_solve_cw on all rows" in prompt
+    assert "Choose ccw only if current matches expected_current_if_solve_ccw on all rows" in prompt
+    assert prompt.count('"tool": "rotate"') == len(DIRECTIONS)
+    assert '{"tool":"rotate","args":{"face":"A","direction":"cw"}}' not in prompt
+    for side, destination in enumerate(ring):
+        previous = ring[(side - 1) % len(ring)]
+        next_face = ring[(side + 1) % len(ring)]
+        strip = [
+            puzzle.stickers[position]
+            for position in DEFAULT_TOPOLOGY.side_strip(hinted_face, destination)
+        ]
+        assert (
+            f"{destination} | solved_target={destination * 3} | current={''.join(strip)} | "
+            f"expected_current_if_solve_cw={next_face * 3} | "
+            f"expected_current_if_solve_ccw={previous * 3}"
+        ) in prompt
+    for forbidden in ("correct_direction", "target_direction", "matched_source", "winner", "best"):
+        assert forbidden not in prompt.lower()
+    assert "source_if_scramble_cw" not in prompt
+    assert "source_if_scramble_ccw" not in prompt
+    assert row["answer"] not in prompt
+    assert row["scramble"] not in prompt
+    assert row["inverse_solution"] not in prompt
+
+
+def test_stage_direction_flow_prompt_local_oracle_solves_all_depth1_moves() -> None:
+    for prompt_style in (
+        "stage_direction_flow_json_action",
+        "stage_direction_flow_reasoned_json_action",
+        "stage_direction_flow_native_tool",
+        "stage_solve_direction_flow_json_action",
+        "stage_solve_direction_flow_native_tool",
+    ):
+        env = load_environment(
+            split="depth1",
+            num_examples=len(FACES) * len(DIRECTIONS),
+            seed=1042,
+            reward_style="action_gated_binary_direction",
+            prompt_style=prompt_style,
             move_budget=1,
         )
-    except ValueError as error:
-        assert "only defined for depth-1" in str(error)
-    else:
-        raise AssertionError("Expected staged face-hint prompt to reject non-depth1 split")
+        for row in env.get_dataset():
+            row = dict(row)
+            prompt = "\n".join(message["content"] for message in row["prompt"])
+            inverse_solution = json.loads(row["inverse_solution"])
+            hinted_face = inverse_solution[0]["face"]
+            rows = [
+                line
+                for line in prompt.splitlines()
+                if (" | before=" in line and "source_if_scramble_" in line)
+                or (" | solved_target=" in line and "expected_current_if_solve_" in line)
+            ]
+            assert len(rows) == 5
+            cw_matches = []
+            ccw_matches = []
+            for line in rows:
+                parts = [part.strip() for part in line.split("|")]
+                current = parts[2].split("=", 1)[1]
+                if "source_if_scramble_" in line:
+                    source_if_cw = parts[3].split("=", 1)[1]
+                    source_if_ccw = parts[4].split("=", 1)[1]
+                    cw_matches.append(current == source_if_cw)
+                    ccw_matches.append(current == source_if_ccw)
+                else:
+                    expected_current_if_solve_cw = parts[3].split("=", 1)[1]
+                    expected_current_if_solve_ccw = parts[4].split("=", 1)[1]
+                    cw_matches.append(current == expected_current_if_solve_cw)
+                    ccw_matches.append(current == expected_current_if_solve_ccw)
+            if "source_if_scramble_" in rows[0]:
+                if all(cw_matches):
+                    chosen = (hinted_face, "ccw")
+                elif all(ccw_matches):
+                    chosen = (hinted_face, "cw")
+                else:
+                    raise AssertionError(f"Prompt has ambiguous flow rows:\n{prompt}")
+            elif all(cw_matches):
+                chosen = (hinted_face, "cw")
+            elif all(ccw_matches):
+                chosen = (hinted_face, "ccw")
+            else:
+                raise AssertionError(f"Prompt has ambiguous solve-flow rows:\n{prompt}")
+            assert chosen == (inverse_solution[0]["face"], inverse_solution[0]["direction"])
+
+
+def test_staged_face_hint_prompt_styles_reject_non_depth1_splits() -> None:
+    for prompt_style in (
+        "stage_face_hint_direction_json_action",
+        "stage_direction_flow_json_action",
+        "stage_direction_flow_reasoned_json_action",
+        "stage_direction_flow_native_tool",
+        "stage_solve_direction_flow_json_action",
+        "stage_solve_direction_flow_native_tool",
+    ):
+        try:
+            load_environment(
+                split="easy",
+                num_examples=3,
+                reward_style="action_gated_exact_direction",
+                prompt_style=prompt_style,
+                move_budget=1,
+            )
+        except ValueError as error:
+            assert "only defined for depth-1" in str(error)
+        else:
+            raise AssertionError(f"Expected {prompt_style} to reject non-depth1 split")
 
 
 def test_choice_json_action_prompt_style_lists_all_legal_actions() -> None:
@@ -548,9 +817,9 @@ def test_topology_choice_json_action_prompt_style_lists_static_rings_without_ans
     assert "Static topology rules:" in prompt
     assert "A turned face can still look solved" in prompt
     assert "the correct face is the face whose five listed neighbors are the affected faces" in prompt
-    assert "A cw turn moves neighbor-strip stickers forward" in prompt
-    assert "A ccw turn moves neighbor-strip stickers reverse" in prompt
-    assert "If the visible sticker flow is forward, undo with ccw" in prompt
+    assert "For a candidate ring X: N0 N1 N2 N3 N4" in prompt
+    assert "If N_i's strip shows label N_{i-1}, the scramble was X:cw" in prompt
+    assert "If N_i's strip shows label N_{i+1}, the scramble was X:ccw" in prompt
     for face in FACES:
         assert f"{face}: {' '.join(DEFAULT_TOPOLOGY.neighbor_rings[face])}" in prompt
     assert row["answer"] not in prompt
@@ -762,6 +1031,362 @@ def test_action_gated_exact_direction_ignores_wrong_face_direction_bonus() -> No
     asyncio.run(run())
 
 
+def test_action_gated_binary_direction_reward_is_binary() -> None:
+    async def run() -> None:
+        env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=42,
+            reward_style="action_gated_binary_direction",
+            prompt_style="stage_direction_flow_json_action",
+            max_turns=2,
+            move_budget=1,
+        )
+        state = {"task": dict(env.get_dataset()[0])}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        target_face, target_direction = rollout.inverse_solution[0]
+        wrong_direction = next(direction for direction in DIRECTIONS if direction != target_direction)
+
+        assert await reward_style(state) == 6.0
+        assert await action_gated_binary_direction_reward(state) == 0.0
+        await env.rotate(target_face, wrong_direction, rollout)
+        assert await action_gated_binary_direction_reward(state) == 0.0
+
+        wrong_face_env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=42,
+            reward_style="action_gated_binary_direction",
+            prompt_style="stage_direction_flow_json_action",
+            max_turns=2,
+            move_budget=1,
+        )
+        wrong_face_state = {"task": dict(wrong_face_env.get_dataset()[0])}
+        await wrong_face_env.setup_state(wrong_face_state)
+        wrong_face_rollout = wrong_face_state["megaminx"]
+        wrong_face = next(face for face in FACES if face != target_face)
+        await wrong_face_env.rotate(wrong_face, target_direction, wrong_face_rollout)
+        assert await action_gated_binary_direction_reward(wrong_face_state) == 0.0
+
+        solved_env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=42,
+            reward_style="action_gated_binary_direction",
+            prompt_style="stage_direction_flow_json_action",
+            max_turns=2,
+            move_budget=1,
+        )
+        solved_state = {"task": dict(solved_env.get_dataset()[0])}
+        await solved_env.setup_state(solved_state)
+        solved_rollout = solved_state["megaminx"]
+        face, direction = solved_rollout.inverse_solution[0]
+        message = AssistantMessage(
+            content=json.dumps({"tool": "rotate", "args": {"face": face, "direction": direction}})
+        )
+        await solved_env.env_response([message], solved_state)
+        assert solved_rollout.solved()
+        assert await text_tool_action_count(solved_state) == 1.0
+        assert await action_gated_binary_direction_reward(solved_state) == 1.0
+
+    asyncio.run(run())
+
+
+def test_action_gated_binary_direction_reward_requires_clean_first_action() -> None:
+    async def run() -> None:
+        env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=42,
+            reward_style="action_gated_binary_direction",
+            prompt_style="stage_direction_flow_json_action",
+            max_turns=2,
+            move_budget=1,
+        )
+        state = {"task": dict(env.get_dataset()[0])}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+
+        await env.rotate("Z", "cw", rollout)
+        await env.rotate(*rollout.inverse_solution[0], rollout)
+
+        assert rollout.solved()
+        assert rollout.illegal_moves == 1
+        assert await action_gated_binary_direction_reward(state) == 0.0
+
+    asyncio.run(run())
+
+
+def test_action_gated_strict_shaped_direction_reward_teaches_clean_partial_credit() -> None:
+    async def run() -> None:
+        env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=42,
+            reward_style="action_gated_strict_shaped_direction",
+            prompt_style="stage_solve_direction_flow_json_action",
+            max_turns=2,
+            move_budget=1,
+        )
+        state = {"task": dict(env.get_dataset()[0])}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        target_face, target_direction = rollout.inverse_solution[0]
+        wrong_direction = next(direction for direction in DIRECTIONS if direction != target_direction)
+
+        message = AssistantMessage(
+            content=json.dumps(
+                {"tool": "rotate", "args": {"face": target_face, "direction": wrong_direction}}
+            )
+        )
+        await env.env_response([message], state)
+
+        assert await reward_style(state) == 7.0
+        assert await first_rotate_face_correct(state) == 1.0
+        assert await first_rotate_direction_correct(state) == 0.0
+        assert await action_gated_binary_direction_reward(state) == 0.0
+        assert abs(await action_gated_strict_shaped_direction_reward(state) - 0.40) < 1e-9
+
+        wrong_face_env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=42,
+            reward_style="action_gated_strict_shaped_direction",
+            prompt_style="stage_solve_direction_flow_json_action",
+            max_turns=2,
+            move_budget=1,
+        )
+        wrong_face_state = {"task": dict(wrong_face_env.get_dataset()[0])}
+        await wrong_face_env.setup_state(wrong_face_state)
+        wrong_face = next(face for face in FACES if face != target_face)
+        wrong_face_message = AssistantMessage(
+            content=json.dumps(
+                {"tool": "rotate", "args": {"face": wrong_face, "direction": target_direction}}
+            )
+        )
+        await wrong_face_env.env_response([wrong_face_message], wrong_face_state)
+
+        assert await first_rotate_face_correct(wrong_face_state) == 0.0
+        assert await first_rotate_direction_correct(wrong_face_state) == 1.0
+        assert abs(await action_gated_strict_shaped_direction_reward(wrong_face_state) - 0.10) < 1e-9
+
+        solved_env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=42,
+            reward_style="action_gated_strict_shaped_direction",
+            prompt_style="stage_solve_direction_flow_json_action",
+            max_turns=2,
+            move_budget=1,
+        )
+        solved_state = {"task": dict(solved_env.get_dataset()[0])}
+        await solved_env.setup_state(solved_state)
+        solved_rollout = solved_state["megaminx"]
+        face, direction = solved_rollout.inverse_solution[0]
+        solved_message = AssistantMessage(
+            content=json.dumps({"tool": "rotate", "args": {"face": face, "direction": direction}})
+        )
+        await solved_env.env_response([solved_message], solved_state)
+
+        assert solved_rollout.solved()
+        assert await action_gated_binary_direction_reward(solved_state) == 1.0
+        assert await action_gated_strict_shaped_direction_reward(solved_state) == 1.0
+
+    asyncio.run(run())
+
+
+def test_action_gated_strict_shaped_direction_reward_uses_strict_protocol_gate() -> None:
+    async def run() -> None:
+        env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=20,
+            reward_style="action_gated_strict_shaped_direction",
+            prompt_style="stage_solve_direction_flow_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        state = {"task": dict(env.get_dataset()[0])}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        face, direction = rollout.inverse_solution[0]
+        message = AssistantMessage(
+            content="extra visible content",
+            tool_calls=[
+                {
+                    "id": "native-call",
+                    "name": "rotate",
+                    "arguments": json.dumps({"face": face, "direction": direction}),
+                }
+            ],
+        )
+        await env.env_response([message], state)
+
+        assert rollout.solved()
+        assert await protocol_violation_count(state) == 1.0
+        assert await action_gated_binary_direction_reward(state) == 0.0
+        assert await action_gated_strict_shaped_direction_reward(state) == 0.0
+
+    asyncio.run(run())
+
+
+def test_action_gated_strict_shaped_direction_reward_handles_native_tool_calls() -> None:
+    async def run() -> None:
+        solved_env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=42,
+            reward_style="action_gated_strict_shaped_direction",
+            prompt_style="stage_solve_direction_flow_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        solved_state = {"task": dict(solved_env.get_dataset()[0])}
+        await solved_env.setup_state(solved_state)
+        solved_rollout = solved_state["megaminx"]
+        face, direction = solved_rollout.inverse_solution[0]
+        solved_message = AssistantMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "native-call",
+                    "name": "rotate",
+                    "arguments": json.dumps({"face": face, "direction": direction}),
+                }
+            ],
+        )
+
+        await solved_env.env_response([solved_message], solved_state)
+
+        assert solved_rollout.solved()
+        assert await native_tool_call_count(solved_state) == 1.0
+        assert await text_tool_action_count(solved_state) == 0.0
+        assert await action_gated_binary_direction_reward(solved_state) == 1.0
+        assert await action_gated_strict_shaped_direction_reward(solved_state) == 1.0
+
+        wrong_direction_env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=42,
+            reward_style="action_gated_strict_shaped_direction",
+            prompt_style="stage_solve_direction_flow_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        wrong_direction_state = {"task": dict(wrong_direction_env.get_dataset()[0])}
+        await wrong_direction_env.setup_state(wrong_direction_state)
+        wrong_direction_rollout = wrong_direction_state["megaminx"]
+        target_face, target_direction = wrong_direction_rollout.inverse_solution[0]
+        wrong_direction = next(item for item in DIRECTIONS if item != target_direction)
+        wrong_direction_message = AssistantMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "native-call",
+                    "name": "rotate",
+                    "arguments": json.dumps({"face": target_face, "direction": wrong_direction}),
+                }
+            ],
+        )
+
+        await wrong_direction_env.env_response([wrong_direction_message], wrong_direction_state)
+
+        assert await first_rotate_face_correct(wrong_direction_state) == 1.0
+        assert await first_rotate_direction_correct(wrong_direction_state) == 0.0
+        assert abs(await action_gated_strict_shaped_direction_reward(wrong_direction_state) - 0.40) < 1e-9
+
+        wrong_face_env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=42,
+            reward_style="action_gated_strict_shaped_direction",
+            prompt_style="stage_solve_direction_flow_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        wrong_face_state = {"task": dict(wrong_face_env.get_dataset()[0])}
+        await wrong_face_env.setup_state(wrong_face_state)
+        wrong_face_rollout = wrong_face_state["megaminx"]
+        wrong_face = next(item for item in FACES if item != target_face)
+        wrong_face_message = AssistantMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "native-call",
+                    "name": "rotate",
+                    "arguments": json.dumps({"face": wrong_face, "direction": target_direction}),
+                }
+            ],
+        )
+
+        await wrong_face_env.env_response([wrong_face_message], wrong_face_state)
+
+        assert wrong_face_rollout.move_count == 1
+        assert await first_rotate_face_correct(wrong_face_state) == 0.0
+        assert await first_rotate_direction_correct(wrong_face_state) == 1.0
+        assert abs(await action_gated_strict_shaped_direction_reward(wrong_face_state) - 0.10) < 1e-9
+
+    asyncio.run(run())
+
+
+def test_action_gated_strict_shaped_direction_reward_rejects_no_action_and_invalid_native_args() -> None:
+    async def run() -> None:
+        no_action_env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=43,
+            reward_style="action_gated_strict_shaped_direction",
+            prompt_style="stage_solve_direction_flow_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        no_action_state = {"task": dict(no_action_env.get_dataset()[0])}
+        await no_action_env.setup_state(no_action_state)
+        no_action_message = AssistantMessage(content="")
+        no_action_state["trajectory"] = [{"completion": [no_action_message]}]
+
+        assert await no_action_env.no_tools_called(no_action_state) is True
+        assert await no_action_env.env_response([no_action_message], no_action_state) == []
+        assert await native_tool_call_count(no_action_state) == 0.0
+        assert await text_tool_action_count(no_action_state) == 0.0
+        assert await action_gated_strict_shaped_direction_reward(no_action_state) == 0.0
+
+        invalid_env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=43,
+            reward_style="action_gated_strict_shaped_direction",
+            prompt_style="stage_solve_direction_flow_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        invalid_state = {"task": dict(invalid_env.get_dataset()[0])}
+        await invalid_env.setup_state(invalid_state)
+        invalid_rollout = invalid_state["megaminx"]
+        invalid_message = AssistantMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "bad-native-call",
+                    "name": "rotate",
+                    "arguments": json.dumps({"face": None, "direction": "cw"}),
+                }
+            ],
+        )
+
+        response = await invalid_env.env_response([invalid_message], invalid_state)
+
+        assert response[0].role == "tool"
+        assert "Illegal move" in response[0].content
+        assert invalid_rollout.move_count == 0
+        assert invalid_rollout.illegal_moves == 1
+        assert await native_tool_call_count(invalid_state) == 1.0
+        assert await action_gated_strict_shaped_direction_reward(invalid_state) == 0.0
+
+    asyncio.run(run())
+
+
 def test_action_gated_overlap_rewards_neighbor_ring_overlap() -> None:
     async def run() -> None:
         env = load_environment(
@@ -813,10 +1438,12 @@ def test_json_text_tool_action_fallback_requires_opt_in() -> None:
         )
         message = AssistantMessage(reasoning_content=action_json)
         state["trajectory"] = [{"completion": [message]}]
-        assert await env.no_tools_called(state) is False
+        assert await env.no_tools_called(state) is True
         response = await env.env_response([message], state)
         assert response == []
         assert rollout.move_count == 0
+        assert await native_tool_call_count(state) == 0.0
+        assert await text_tool_action_count(state) == 0.0
 
         legacy_env = load_environment(
             split="depth1",
@@ -846,7 +1473,217 @@ def test_json_text_tool_action_fallback_requires_opt_in() -> None:
         assert response[0].role == "tool"
         assert legacy_rollout.solved()
         assert await rotate_call_count(legacy_state) == 1.0
+        assert await native_tool_call_count(legacy_state) == 0.0
+        assert await text_tool_action_count(legacy_state) == 1.0
         assert await action_gated_dense_reward(legacy_state) == 1.0
+
+    asyncio.run(run())
+
+
+def test_native_tool_calls_take_precedence_over_text_action_fallback() -> None:
+    async def run() -> None:
+        env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=19,
+            reward_style="action_gated_dense",
+            prompt_style="action_first",
+            allow_text_tool_actions=True,
+        )
+        row = dict(env.get_dataset()[0])
+        state = {"task": row}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        face, direction = rollout.inverse_solution[0]
+        wrong_direction = next(d for d in DIRECTIONS if d != direction)
+        visible_json = json.dumps({"tool": "rotate", "args": {"face": face, "direction": wrong_direction}})
+        message = AssistantMessage(
+            content=visible_json,
+            tool_calls=[
+                {
+                    "id": "native-call",
+                    "name": "rotate",
+                    "arguments": json.dumps({"face": face, "direction": direction}),
+                }
+            ],
+        )
+
+        response = await env.env_response([message], state)
+
+        assert response[0].role == "tool"
+        assert rollout.solved()
+        assert await rotate_call_count(state) == 1.0
+        assert await native_tool_call_count(state) == 1.0
+        assert await text_tool_action_count(state) == 0.0
+        assert await action_gated_dense_reward(state) == 1.0
+
+    asyncio.run(run())
+
+
+def test_strict_binary_rejects_native_call_with_visible_content() -> None:
+    async def run() -> None:
+        env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=20,
+            reward_style="action_gated_binary_direction",
+            prompt_style="stage_solve_direction_flow_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        state = {"task": dict(env.get_dataset()[0])}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        face, direction = rollout.inverse_solution[0]
+        message = AssistantMessage(
+            content="I will solve this first.",
+            tool_calls=[
+                {
+                    "id": "native-call",
+                    "name": "rotate",
+                    "arguments": json.dumps({"face": face, "direction": direction}),
+                }
+            ],
+        )
+
+        response = await env.env_response([message], state)
+
+        assert response[0].role == "tool"
+        assert rollout.solved()
+        assert await native_tool_call_count(state) == 1.0
+        assert await protocol_violation_count(state) == 1.0
+        assert await action_gated_binary_direction_reward(state) == 0.0
+
+    asyncio.run(run())
+
+
+def test_strict_binary_rejects_hidden_json_after_visible_text() -> None:
+    async def run() -> None:
+        env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=21,
+            reward_style="action_gated_binary_direction",
+            prompt_style="stage_solve_direction_flow_json_action",
+            max_turns=2,
+            move_budget=1,
+        )
+        state = {"task": dict(env.get_dataset()[0])}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        face, direction = rollout.inverse_solution[0]
+        message = AssistantMessage(
+            content="I will solve it now.",
+            reasoning_content=json.dumps({"tool": "rotate", "args": {"face": face, "direction": direction}}),
+        )
+        state["trajectory"] = [{"completion": [message]}]
+
+        assert await env.no_tools_called(state) is False
+        response = await env.env_response([message], state)
+
+        assert response[0].role == "tool"
+        assert "Tool error" in response[0].content
+        assert rollout.move_count == 0
+        assert await text_tool_action_count(state) == 1.0
+        assert await private_text_action_count(state) == 0.0
+        assert await tool_parse_error_count(state) == 1.0
+        assert await protocol_violation_count(state) == 1.0
+        assert await action_gated_binary_direction_reward(state) == 0.0
+
+    asyncio.run(run())
+
+
+def test_strict_binary_accepts_private_only_json_action() -> None:
+    async def run() -> None:
+        env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=22,
+            reward_style="action_gated_binary_direction",
+            prompt_style="stage_solve_direction_flow_json_action",
+            max_turns=2,
+            move_budget=1,
+        )
+        state = {"task": dict(env.get_dataset()[0])}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        face, direction = rollout.inverse_solution[0]
+        message = AssistantMessage(
+            content="",
+            reasoning_content=json.dumps({"tool": "rotate", "args": {"face": face, "direction": direction}}),
+        )
+        state["trajectory"] = [{"completion": [message]}]
+
+        assert await env.no_tools_called(state) is False
+        response = await env.env_response([message], state)
+
+        assert response[0].role == "tool"
+        assert rollout.solved()
+        assert await text_tool_action_count(state) == 1.0
+        assert await private_text_action_count(state) == 1.0
+        assert await action_gated_binary_direction_reward(state) == 1.0
+
+    asyncio.run(run())
+
+
+def test_private_structured_reasoning_metadata_is_ignored() -> None:
+    async def run() -> None:
+        env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=26,
+            reward_style="action_gated_binary_direction",
+            prompt_style="stage_solve_direction_flow_json_action",
+            allow_text_tool_actions=True,
+            max_turns=2,
+            move_budget=1,
+        )
+        state = {"task": dict(env.get_dataset()[0])}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        message = AssistantMessage(content="", reasoning={"summary": []})
+        state["trajectory"] = [{"completion": [message]}]
+
+        assert await env.no_tools_called(state) is True
+        assert await env.env_response([message], state) == []
+        assert rollout.move_count == 0
+        assert await text_tool_action_count(state) == 0.0
+        assert await private_text_action_count(state) == 0.0
+        assert await tool_parse_error_count(state) == 0.0
+        assert await action_gated_binary_direction_reward(state) == 0.0
+
+    asyncio.run(run())
+
+
+def test_private_malformed_json_counts_private_parse_error() -> None:
+    async def run() -> None:
+        env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=26,
+            reward_style="action_gated_binary_direction",
+            prompt_style="stage_solve_direction_flow_json_action",
+            allow_text_tool_actions=True,
+            max_turns=2,
+            move_budget=1,
+        )
+        state = {"task": dict(env.get_dataset()[0])}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        message = AssistantMessage(content="", reasoning_content='{"tool": "rotate", "args": ')
+        state["trajectory"] = [{"completion": [message]}]
+
+        assert await env.no_tools_called(state) is False
+        response = await env.env_response([message], state)
+
+        assert response[0].role == "tool"
+        assert "Tool error" in response[0].content
+        assert rollout.move_count == 0
+        assert await text_tool_action_count(state) == 1.0
+        assert await private_text_action_count(state) == 1.0
+        assert await tool_parse_error_count(state) == 1.0
+        assert await protocol_violation_count(state) == 1.0
+        assert await action_gated_binary_direction_reward(state) == 0.0
 
     asyncio.run(run())
 
@@ -907,6 +1744,101 @@ def test_json_action_fallback_penalizes_malformed_args() -> None:
         assert rollout.illegal_moves == 4
         assert rollout.move_count == 0
         assert await action_gated_curriculum_reward(state) == 0.0
+
+    asyncio.run(run())
+
+
+def test_text_fallback_unknown_tool_counts_one_illegal_action() -> None:
+    async def run() -> None:
+        env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=29,
+            reward_style="action_gated_curriculum",
+            prompt_style="sensor_choice_json_action",
+            allow_text_tool_actions=True,
+        )
+        state = {"task": dict(env.get_dataset()[0])}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        message = AssistantMessage(content=json.dumps({"tool": "bogus", "args": {}}))
+
+        response = await env.env_response([message], state)
+
+        assert response[0].role == "tool"
+        assert "Tool error" in response[0].content
+        assert rollout.illegal_moves == 1
+        assert await text_tool_action_count(state) == 1.0
+        assert await tool_call_error_count(state) == 1.0
+
+    asyncio.run(run())
+
+
+def test_text_fallback_rejects_multi_action_json_lists() -> None:
+    async def run() -> None:
+        env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=30,
+            reward_style="action_gated_binary_direction",
+            prompt_style="stage_solve_direction_flow_json_action",
+            allow_text_tool_actions=True,
+            max_turns=2,
+            move_budget=1,
+        )
+        state = {"task": dict(env.get_dataset()[0])}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        face, direction = rollout.inverse_solution[0]
+        message = AssistantMessage(
+            content=json.dumps(
+                [
+                    {"tool": "rotate", "args": {"face": face, "direction": direction}},
+                    {"tool": "inspect", "args": {"face": "all"}},
+                ]
+            )
+        )
+
+        assert await env.no_tools_called(state | {"trajectory": [{"completion": [message]}]}) is False
+        response = await env.env_response([message], state)
+
+        assert response[0].role == "tool"
+        assert "Tool error" in response[0].content
+        assert rollout.move_count == 0
+        assert rollout.illegal_moves == 1
+        assert await text_tool_action_count(state) == 1.0
+        assert await tool_parse_error_count(state) == 1.0
+        assert await action_gated_binary_direction_reward(state) == 0.0
+
+    asyncio.run(run())
+
+
+def test_text_fallback_malformed_json_counts_parse_error() -> None:
+    async def run() -> None:
+        env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=32,
+            reward_style="action_gated_binary_direction",
+            prompt_style="stage_solve_direction_flow_json_action",
+            allow_text_tool_actions=True,
+        )
+        state = {"task": dict(env.get_dataset()[0])}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        message = AssistantMessage(content='{"tool": "rotate", "args": ')
+        state["trajectory"] = [{"completion": [message]}]
+
+        assert await env.no_tools_called(state) is False
+        response = await env.env_response([message], state)
+
+        assert response[0].role == "tool"
+        assert "Tool error" in response[0].content
+        assert rollout.move_count == 0
+        assert rollout.illegal_moves == 1
+        assert await text_tool_action_count(state) == 1.0
+        assert await tool_parse_error_count(state) == 1.0
+        assert await action_gated_binary_direction_reward(state) == 0.0
 
     asyncio.run(run())
 
@@ -976,6 +1908,45 @@ def test_json_action_fallback_reads_extra_reasoning_fields() -> None:
     asyncio.run(run())
 
 
+def test_reasoned_json_action_requires_visible_final_json() -> None:
+    async def run() -> None:
+        env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=41,
+            reward_style="action_gated_binary_direction",
+            prompt_style="stage_direction_flow_reasoned_json_action",
+            allow_text_tool_actions=True,
+        )
+        row = dict(env.get_dataset()[0])
+        state = {"task": row}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        face, direction = rollout.inverse_solution[0]
+        action_json = json.dumps({"tool": "rotate", "args": {"face": face, "direction": direction}})
+
+        hidden_only = AssistantMessage(content="", reasoning_content=action_json)
+        state["trajectory"] = [{"completion": [hidden_only]}]
+        assert await env.no_tools_called(state) is True
+        response = await env.env_response([hidden_only], state)
+        assert response == []
+        assert rollout.move_count == 0
+
+        visible_final = AssistantMessage(
+            content=action_json,
+            reasoning_content="I compare the table privately.",
+        )
+        state["trajectory"] = [{"completion": [visible_final]}]
+        assert await env.no_tools_called(state) is False
+        response = await env.env_response([visible_final], state)
+        assert response[0].role == "tool"
+        assert rollout.solved()
+        assert await rotate_call_count(state) == 1.0
+        assert await action_gated_binary_direction_reward(state) == 1.0
+
+    asyncio.run(run())
+
+
 def test_invalid_native_tool_call_args_are_penalized_without_crashing() -> None:
     async def run() -> None:
         env = load_environment(
@@ -1005,7 +1976,46 @@ def test_invalid_native_tool_call_args_are_penalized_without_crashing() -> None:
         assert "Illegal move" in response[0].content
         assert rollout.illegal_moves == 1
         assert rollout.move_count == 0
+        assert await native_tool_call_count(state) == 1.0
+        assert await text_tool_action_count(state) == 0.0
         assert await action_gated_curriculum_reward(state) == 0.0
+
+    asyncio.run(run())
+
+
+def test_malformed_native_tool_call_is_counted_as_parse_error() -> None:
+    async def run() -> None:
+        env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=35,
+            reward_style="action_gated_binary_direction",
+            prompt_style="stage_solve_direction_flow_native_tool",
+        )
+        state = {"task": dict(env.get_dataset()[0])}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        message = AssistantMessage(
+            content=json.dumps({"tool": "rotate", "args": {"face": rollout.inverse_solution[0][0], "direction": rollout.inverse_solution[0][1]}}),
+            tool_calls=[
+                {
+                    "id": "malformed-native-call",
+                    "name": "rotate",
+                    "arguments": "{not-json",
+                }
+            ],
+        )
+
+        response = await env.env_response([message], state)
+
+        assert response[0].role == "tool"
+        assert "Tool error" in response[0].content
+        assert rollout.move_count == 0
+        assert rollout.illegal_moves == 1
+        assert await native_tool_call_count(state) == 1.0
+        assert await text_tool_action_count(state) == 0.0
+        assert await tool_parse_error_count(state) == 1.0
+        assert await action_gated_binary_direction_reward(state) == 0.0
 
     asyncio.run(run())
 
@@ -1024,3 +2034,20 @@ def test_tool_schema_and_metadata_path() -> None:
     assert env.env_args["prompt_style"] == "default"
     assert env.env_args["allow_text_tool_actions"] is False
     assert env.env_args["move_budget"] is None
+
+
+def test_package_metadata_matches_published_environment() -> None:
+    env_dir = Path(__file__).resolve().parents[1] / "environments" / "megaminx_solver"
+    pyproject = tomllib.loads((env_dir / "pyproject.toml").read_text())
+    metadata = json.loads((env_dir / ".prime" / ".env-metadata.json").read_text())
+
+    assert pyproject["project"]["name"] == "megaminx-solver"
+    assert pyproject["project"]["version"] == "0.2.29"
+    assert pyproject["project"]["license"] == "MIT"
+    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+        "megaminx_solver"
+    ]
+    assert metadata["owner"] == "setrf"
+    assert metadata["name"] == "megaminx-solver"
+    assert metadata["environment_id"] == "ozde27sytxjkc3wm83zv4e2c"
+    assert metadata["wheel_sha256"] == "f19e1209dabae728af50ad540528ef5c71edb838471886cb0945ca078aae8db8"

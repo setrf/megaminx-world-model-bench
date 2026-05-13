@@ -6,6 +6,7 @@ on:
     branches:
       - main
       - codex/megaminx-rl-environment
+      - codex/megaminx-direction-breakthrough
 
 jobs:
   test:

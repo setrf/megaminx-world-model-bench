@@ -1,0 +1,75 @@
+name = "megaminx-depth1-qwen9b-solve-flow-binary-v022"
+model = "Qwen/Qwen3.5-9B"
+max_steps = 120
+batch_size = 256
+rollouts_per_example = 16
+learning_rate = 3e-7
+lora_alpha = 16
+oversampling_factor = 2.0
+max_async_level = 1
+
+[sampling]
+max_tokens = 48
+temperature = 0.7
+enable_thinking = false
+
+[sampling.extra_body]
+tool_choice = { type = "function", function = { name = "rotate" } }
+
+[[env]]
+id = "setrf/megaminx-solver"
+version = "0.2.22"
+
+[env.args]
+split = "train_depth1"
+num_examples = 960
+seed = 42
+max_turns = 2
+move_budget = 1
+reward_style = "action_gated_binary_direction"
+prompt_style = "stage_solve_direction_flow_json_action"
+allow_text_tool_actions = true
+
+[eval]
+interval = 10
+num_examples = 120
+rollouts_per_example = 1
+eval_base_model = true
+
+[[eval.env]]
+id = "setrf/megaminx-solver"
+name = "eval_depth1"
+version = "0.2.22"
+
+[eval.env.args]
+split = "eval_depth1"
+num_examples = 120
+seed = 1042
+max_turns = 2
+move_budget = 1
+reward_style = "action_gated_binary_direction"
+prompt_style = "stage_solve_direction_flow_json_action"
+allow_text_tool_actions = true
+
+[[eval.env]]
+id = "setrf/megaminx-solver"
+name = "train_depth1_probe"
+version = "0.2.22"
+
+[eval.env.args]
+split = "train_depth1"
+num_examples = 120
+seed = 42
+max_turns = 2
+move_budget = 1
+reward_style = "action_gated_binary_direction"
+prompt_style = "stage_solve_direction_flow_json_action"
+allow_text_tool_actions = true
+
+[checkpoints]
+interval = 10
+keep_cloud = 5
+
+[adapters]
+interval = 10
+keep_last = 5

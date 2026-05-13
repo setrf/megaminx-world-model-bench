@@ -1,0 +1,43 @@
+# Strict v0.2.27 depth-1 served-eval lane.
+# For trained adapters, copy this file and replace the model with:
+# model = "Qwen/Qwen3.5-9B:<adapter_id>"
+
+[[eval]]
+env_id = "setrf/megaminx-solver@0.2.27"
+model = "Qwen/Qwen3.5-9B"
+api_client_type = "openai_chat_completions"
+num_examples = 240
+rollouts_per_example = 1
+max_tokens = 48
+temperature = 0.7
+sampling_args = { tool_choice = { type = "function", function = { name = "rotate" } } }
+
+[eval.args]
+split = "eval_depth1"
+num_examples = 240
+seed = 1042
+max_turns = 2
+move_budget = 1
+reward_style = "action_gated_binary_direction"
+prompt_style = "stage_solve_direction_flow_json_action"
+allow_text_tool_actions = true
+
+[[eval]]
+env_id = "setrf/megaminx-solver@0.2.27"
+model = "Qwen/Qwen3.5-9B"
+api_client_type = "openai_chat_completions"
+num_examples = 240
+rollouts_per_example = 1
+max_tokens = 48
+temperature = 0.7
+sampling_args = { tool_choice = { type = "function", function = { name = "rotate" } } }
+
+[eval.args]
+split = "train_depth1"
+num_examples = 240
+seed = 42
+max_turns = 2
+move_budget = 1
+reward_style = "action_gated_binary_direction"
+prompt_style = "stage_solve_direction_flow_json_action"
+allow_text_tool_actions = true
