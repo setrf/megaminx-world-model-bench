@@ -2,7 +2,7 @@
 name = "megaminx-solver"
 description = "Trainable multi-turn Megaminx spatial reasoning environment for Prime Intellect Verifiers."
 tags = ["multi-turn", "tool-env", "spatial-reasoning", "megaminx", "rl", "train", "eval"]
-version = "0.2.20"
+version = "0.2.29"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [

@@ -1,0 +1,39 @@
+name = "megaminx-depth1-qwen9b-solve-flow-binary-v022-trainfirst"
+model = "Qwen/Qwen3.5-9B"
+max_steps = 40
+batch_size = 256
+rollouts_per_example = 16
+learning_rate = 7.5e-8
+lora_alpha = 16
+oversampling_factor = 1.0
+max_async_level = 1
+
+[sampling]
+max_tokens = 48
+temperature = 0.7
+enable_thinking = false
+
+[sampling.extra_body]
+tool_choice = { type = "function", function = { name = "rotate" } }
+
+[[env]]
+id = "setrf/megaminx-solver"
+version = "0.2.22"
+
+[env.args]
+split = "train_depth1"
+num_examples = 480
+seed = 42
+max_turns = 2
+move_budget = 1
+reward_style = "action_gated_binary_direction"
+prompt_style = "stage_solve_direction_flow_json_action"
+allow_text_tool_actions = true
+
+[checkpoints]
+interval = 5
+keep_cloud = 4
+
+[adapters]
+interval = 5
+keep_last = 4
