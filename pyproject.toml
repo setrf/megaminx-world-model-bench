@@ -1,7 +1,7 @@
 [project]
 name = "megaminx"
 version = "0.1.0"
-description = "Add your description here"
+description = "Prime Lab workspace for a Megaminx RL environment."
 readme = "README.md"
 requires-python = ">=3.13"
 license = "MIT"

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from random import Random
 from typing import Any, Sequence
 
@@ -16,6 +16,7 @@ from .simulator import (
     MegaminxPuzzle,
     MegaminxTopology,
     Move,
+    POSITIONS_PER_FACE,
     generate_scramble,
     inverse_moves,
     move_to_text,
@@ -33,8 +34,75 @@ Use rotate to change the puzzle. Inspect only when you need more state. Call
 finish only after the puzzle is solved or when you are giving up.
 """
 
-REWARD_STYLES = {"dense", "action_gated_dense"}
-PROMPT_STYLES = {"default", "action_first"}
+REWARD_STYLES = {
+    "dense",
+    "action_gated_dense",
+    "action_gated_curriculum",
+    "action_gated_overlap",
+}
+PROMPT_STYLES = {
+    "default",
+    "action_first",
+    "direct_json_action",
+    "choice_json_action",
+    "topology_choice_json_action",
+    "sensor_choice_json_action",
+    "sensor_match_json_action",
+    "native_action",
+    "topology_native_tool",
+    "sensor_native_tool",
+    "sensor_match_native_tool",
+}
+
+ACTION_FIRST_PROMPT_STYLES = {
+    "action_first",
+    "direct_json_action",
+    "choice_json_action",
+    "topology_choice_json_action",
+    "sensor_choice_json_action",
+    "sensor_match_json_action",
+    "native_action",
+    "topology_native_tool",
+    "sensor_native_tool",
+    "sensor_match_native_tool",
+}
+JSON_ACTION_PROMPT_STYLES = {
+    "direct_json_action",
+    "choice_json_action",
+    "topology_choice_json_action",
+    "sensor_choice_json_action",
+    "sensor_match_json_action",
+}
+CHOICE_JSON_PROMPT_STYLES = {
+    "choice_json_action",
+    "topology_choice_json_action",
+    "sensor_choice_json_action",
+    "sensor_match_json_action",
+}
+TOPOLOGY_PROMPT_STYLES = {
+    "topology_choice_json_action",
+    "sensor_choice_json_action",
+    "sensor_match_json_action",
+    "topology_native_tool",
+    "sensor_native_tool",
+    "sensor_match_native_tool",
+}
+SENSOR_PROMPT_STYLES = {
+    "sensor_choice_json_action",
+    "sensor_match_json_action",
+    "sensor_native_tool",
+    "sensor_match_native_tool",
+}
+MATCH_TABLE_PROMPT_STYLES = {
+    "sensor_match_json_action",
+    "sensor_match_native_tool",
+}
+NATIVE_TOOL_PROMPT_STYLES = {
+    "native_action",
+    "topology_native_tool",
+    "sensor_native_tool",
+    "sensor_match_native_tool",
+}
 
 SPLIT_DEPTHS = {
     "depth1": (1, 1),
@@ -63,6 +131,7 @@ class RolloutMegaminx:
     reward_style: str
     initial_sticker_accuracy: float
     initial_piece_accuracy: float
+    initial_affected_faces: tuple[str, ...]
     move_count: int = 0
     illegal_moves: int = 0
     tool_calls: int = 0
@@ -72,7 +141,6 @@ class RolloutMegaminx:
     finished: bool = False
     last_move: str = "none"
     first_rotate: Move | None = None
-    history: list[str] = field(default_factory=list)
 
     def solved(self) -> bool:
         return self.puzzle.is_solved()
@@ -198,9 +266,25 @@ async def first_rotate_direction_correct(state: vf.State) -> float:
     return float(rollout.first_rotate[1] == rollout.inverse_solution[0][1])
 
 
+async def first_rotate_neighbor_overlap(state: vf.State) -> float:
+    rollout = _rollout_from_state(state)
+    if not rollout or not rollout.first_rotate or not rollout.initial_affected_faces:
+        return 0.0
+    ring = set(rollout.puzzle.topology.neighbor_rings[rollout.first_rotate[0]])
+    affected = set(rollout.initial_affected_faces)
+    return len(ring & affected) / len(affected)
+
+
 async def reward_style(state: vf.State) -> float:
     rollout = _rollout_from_state(state)
-    return float(bool(rollout and rollout.reward_style == "action_gated_dense"))
+    if not rollout:
+        return 0.0
+    return {
+        "dense": 0.0,
+        "action_gated_dense": 1.0,
+        "action_gated_curriculum": 2.0,
+        "action_gated_overlap": 3.0,
+    }.get(rollout.reward_style, 0.0)
 
 
 async def initial_sticker_accuracy(state: vf.State) -> float:
@@ -228,13 +312,82 @@ async def action_gated_dense_reward(state: vf.State) -> float:
     return max(0.0, min(0.4, progress_delta))
 
 
+async def action_gated_curriculum_reward(state: vf.State) -> float:
+    rollout = _rollout_from_state(state)
+    if not rollout:
+        return 0.0
+    if rollout.solved():
+        return 1.0
+    if rollout.move_count == 0 or rollout.first_rotate is None:
+        return 0.0
+
+    reward = 0.02
+    if rollout.inverse_solution:
+        target_face, target_direction = rollout.inverse_solution[0]
+        first_face, first_direction = rollout.first_rotate
+        if first_face == target_face:
+            reward += 0.35
+            if first_direction == target_direction:
+                reward += 0.05
+
+    sticker_delta = rollout.puzzle.sticker_accuracy() - rollout.initial_sticker_accuracy
+    piece_delta = rollout.puzzle.piece_accuracy() - rollout.initial_piece_accuracy
+    progress_delta = max(0.0, 0.7 * sticker_delta + 0.3 * piece_delta)
+    reward += min(0.30, progress_delta)
+    return min(0.65, reward)
+
+
+async def action_gated_overlap_reward(state: vf.State) -> float:
+    rollout = _rollout_from_state(state)
+    if not rollout:
+        return 0.0
+    if rollout.solved():
+        return 1.0
+    if rollout.move_count == 0 or rollout.first_rotate is None:
+        return 0.0
+
+    reward = 0.02
+    overlap = await first_rotate_neighbor_overlap(state)
+    reward += 0.30 * overlap
+
+    if rollout.inverse_solution:
+        target_face, target_direction = rollout.inverse_solution[0]
+        first_face, first_direction = rollout.first_rotate
+        if first_face == target_face:
+            reward += 0.15
+            if first_direction == target_direction:
+                reward += 0.05
+
+    sticker_delta = rollout.puzzle.sticker_accuracy() - rollout.initial_sticker_accuracy
+    piece_delta = rollout.puzzle.piece_accuracy() - rollout.initial_piece_accuracy
+    progress_delta = max(0.0, 0.7 * sticker_delta + 0.3 * piece_delta)
+    reward += min(0.10, progress_delta)
+    return min(0.65, reward)
+
+
 class MegaminxEnv(vf.StatefulToolEnv):
-    def __init__(self, topology: MegaminxTopology | None = None, **kwargs: Any):
+    def __init__(
+        self,
+        topology: MegaminxTopology | None = None,
+        allow_text_tool_actions: bool = False,
+        **kwargs: Any,
+    ):
         self.topology = topology or DEFAULT_TOPOLOGY
+        self.allow_text_tool_actions = allow_text_tool_actions
         super().__init__(tools=[], error_formatter=lambda error: f"Tool error: {error}", **kwargs)
         self.add_tool(self.rotate, args_to_skip=["rollout"])
         self.add_tool(self.inspect, args_to_skip=["rollout"])
         self.add_tool(self.finish, args_to_skip=["rollout"])
+        self._constrain_tool_schemas()
+
+    def _constrain_tool_schemas(self) -> None:
+        for tool in self.tool_defs:
+            properties = tool.parameters.get("properties", {})
+            if tool.name == "rotate":
+                properties.get("face", {})["enum"] = list(FACES)
+                properties.get("direction", {})["enum"] = list(DIRECTIONS)
+            elif tool.name == "inspect":
+                properties.get("face", {})["enum"] = [*FACES, "all"]
 
     async def setup_state(self, state: vf.State) -> None:
         await super().setup_state(state)
@@ -245,6 +398,7 @@ class MegaminxEnv(vf.StatefulToolEnv):
         puzzle.apply_moves(scramble)
         initial_sticker = puzzle.sticker_accuracy()
         initial_piece = puzzle.piece_accuracy()
+        initial_affected = _affected_faces(puzzle)
         state["megaminx"] = RolloutMegaminx(
             puzzle=puzzle,
             scramble=scramble,
@@ -254,6 +408,7 @@ class MegaminxEnv(vf.StatefulToolEnv):
             reward_style=task.get("reward_style", "dense"),
             initial_sticker_accuracy=initial_sticker,
             initial_piece_accuracy=initial_piece,
+            initial_affected_faces=initial_affected,
         )
 
     def update_tool_args(
@@ -274,8 +429,13 @@ class MegaminxEnv(vf.StatefulToolEnv):
     async def env_response(
         self, messages: vf.Messages, state: vf.State, **kwargs: Any
     ) -> vf.Messages:
-        parsed_action = _parse_message_tool_action(messages[-1])
-        if parsed_action and not getattr(messages[-1], "tool_calls", None):
+        parsed_action = (
+            _parse_message_tool_action(messages[-1])
+            if self.allow_text_tool_actions
+            else None
+        )
+        has_native_tool_calls = bool(getattr(messages[-1], "tool_calls", None))
+        if parsed_action and not has_native_tool_calls:
             tool_name, tool_args = parsed_action
             tool_args = self.update_tool_args(tool_name, tool_args, messages, state, **kwargs)
             try:
@@ -291,6 +451,8 @@ class MegaminxEnv(vf.StatefulToolEnv):
                         tool_call_id="text-tool-0",
                     )
                 ]
+        elif not has_native_tool_calls:
+            tool_messages = []
         else:
             tool_messages = await super().env_response(messages, state, **kwargs)
         rollout = _rollout_from_state(state)
@@ -337,7 +499,6 @@ class MegaminxEnv(vf.StatefulToolEnv):
         rollout.last_move = move_to_text((face, direction))
         if rollout.first_rotate is None:
             rollout.first_rotate = (face, direction)
-        rollout.history.append(rollout.last_move)
         if rollout.solved() or rollout.exhausted():
             rollout.finished = True
         return rollout.observation()
@@ -353,6 +514,12 @@ class MegaminxEnv(vf.StatefulToolEnv):
         """
         rollout.tool_calls += 1
         rollout.inspect_call_count += 1
+        if not isinstance(face, str):
+            rollout.illegal_moves += 1
+            return (
+                f"Illegal inspect target: expected A-L or all, got {type(face).__name__}.\n"
+                + rollout.observation()
+            )
         face = face.strip().upper()
         if face == "ALL":
             return rollout.observation()
@@ -388,8 +555,11 @@ def load_environment(
     max_turns: int | None = None,
     reward_style: str = "dense",
     prompt_style: str = "default",
+    allow_text_tool_actions: bool | None = None,
 ) -> vf.Environment:
     _validate_styles(reward_style, prompt_style)
+    if allow_text_tool_actions is None:
+        allow_text_tool_actions = prompt_style in JSON_ACTION_PROMPT_STYLES
     dataset = build_dataset(
         split=split,
         min_depth=min_depth,
@@ -407,6 +577,7 @@ def load_environment(
         system_prompt=SYSTEM_PROMPT,
         rubric=rubric,
         max_turns=global_max_turns,
+        allow_text_tool_actions=allow_text_tool_actions,
         env_id="megaminx-solver",
         env_args={
             "split": split,
@@ -417,6 +588,7 @@ def load_environment(
             "max_turns": max_turns,
             "reward_style": reward_style,
             "prompt_style": prompt_style,
+            "allow_text_tool_actions": allow_text_tool_actions,
         },
     )
 
@@ -441,9 +613,16 @@ def build_dataset(
     rng = Random(seed)
     rows: list[dict[str, Any]] = []
     depth_span = max_depth - min_depth + 1
+    depth_occurrences: dict[int, int] = {}
+    depth1_moves = _balanced_depth1_moves(seed)
     for index in range(num_examples):
         depth = min_depth + (index % depth_span)
-        scramble = generate_scramble(depth, rng)
+        depth_occurrences[depth] = depth_occurrences.get(depth, 0) + 1
+        if depth == 1:
+            occurrence = depth_occurrences[depth] - 1
+            scramble = [depth1_moves[occurrence % len(depth1_moves)]]
+        else:
+            scramble = generate_scramble(depth, rng)
         inverse_solution = inverse_moves(scramble)
         move_budget = max_turns if max_turns is not None else min(32, 2 * depth + 4)
         puzzle = MegaminxPuzzle.solved(DEFAULT_TOPOLOGY)
@@ -555,6 +734,7 @@ def _build_rubric(reward_style_name: str) -> vf.Rubric:
         first_rotate_correct,
         first_rotate_face_correct,
         first_rotate_direction_correct,
+        first_rotate_neighbor_overlap,
         reward_style,
         initial_sticker_accuracy,
         initial_piece_accuracy,
@@ -570,9 +750,16 @@ def _build_rubric(reward_style_name: str) -> vf.Rubric:
             ],
             weights=[0.60, 0.25, 0.10, 0.05, *([0.0] * len(metric_funcs))],
         )
+    reward_func = (
+        action_gated_overlap_reward
+        if reward_style_name == "action_gated_overlap"
+        else action_gated_curriculum_reward
+        if reward_style_name == "action_gated_curriculum"
+        else action_gated_dense_reward
+    )
     return vf.Rubric(
         funcs=[
-            action_gated_dense_reward,
+            reward_func,
             sticker_accuracy,
             piece_accuracy,
             efficiency_if_solved,
@@ -593,36 +780,52 @@ def _validate_styles(reward_style: str, prompt_style: str) -> None:
 
 def _parse_text_tool_action(content: Any) -> tuple[str, dict[str, Any]] | None:
     text = _content_to_text(content).strip()
-    if not text:
+    if not text or text[0] not in "[{":
         return None
-    for start in (index for index, char in enumerate(text) if char in "[{"):
+    try:
+        parsed, end = json.JSONDecoder().raw_decode(text)
+    except json.JSONDecodeError:
+        return None
+    if text[end:].strip():
+        return None
+    if isinstance(parsed, list) and parsed:
+        parsed = parsed[0]
+    if not isinstance(parsed, dict):
+        return None
+    name = parsed.get("name") or parsed.get("tool") or parsed.get("tool_name")
+    args = parsed.get("parameters") or parsed.get("arguments") or parsed.get("args")
+    if name is None and {"face", "direction"} <= set(parsed):
+        name = "rotate"
+        args = {"face": parsed["face"], "direction": parsed["direction"]}
+    if isinstance(args, str):
         try:
-            parsed, _ = json.JSONDecoder().raw_decode(text[start:])
+            args = json.loads(args)
         except json.JSONDecodeError:
-            continue
-        if isinstance(parsed, list) and parsed:
-            parsed = parsed[0]
-        if not isinstance(parsed, dict):
-            continue
-        name = parsed.get("name") or parsed.get("tool") or parsed.get("tool_name")
-        args = parsed.get("parameters") or parsed.get("arguments") or parsed.get("args")
-        if name is None and {"face", "direction"} <= set(parsed):
-            name = "rotate"
-            args = {"face": parsed["face"], "direction": parsed["direction"]}
-        if isinstance(args, str):
-            try:
-                args = json.loads(args)
-            except json.JSONDecodeError:
-                args = {}
-        if isinstance(name, str) and isinstance(args, dict):
-            return name, args
+            args = {}
+    if isinstance(name, str):
+        return name, args if isinstance(args, dict) else {}
     return None
 
 
 def _parse_message_tool_action(message: Any) -> tuple[str, dict[str, Any]] | None:
-    return _parse_text_tool_action(getattr(message, "content", None)) or _parse_text_tool_action(
-        getattr(message, "reasoning_content", None)
-    )
+    payloads: list[Any] = [
+        getattr(message, "content", None),
+        getattr(message, "reasoning_content", None),
+        getattr(message, "reasoning", None),
+        getattr(message, "thinking", None),
+        getattr(message, "thinking_blocks", None),
+    ]
+    model_extra = getattr(message, "model_extra", None)
+    if isinstance(model_extra, dict):
+        payloads.extend(
+            model_extra.get(key)
+            for key in ("reasoning", "thinking", "reasoning_content", "thinking_blocks")
+        )
+    for payload in payloads:
+        parsed = _parse_text_tool_action(payload)
+        if parsed:
+            return parsed
+    return None
 
 
 def _content_to_text(content: Any) -> str:
@@ -636,9 +839,10 @@ def _content_to_text(content: Any) -> str:
             if isinstance(part, str):
                 parts.append(part)
             elif isinstance(part, dict):
-                text = part.get("text")
-                if isinstance(text, str):
-                    parts.append(text)
+                for key in ("text", "content", "reasoning", "thinking"):
+                    text = part.get(key)
+                    if isinstance(text, str):
+                        parts.append(text)
             else:
                 text = getattr(part, "text", None)
                 if isinstance(text, str):
@@ -664,7 +868,7 @@ def _build_prompt(
         "Use rotate(face, direction), inspect(face), and finish().",
         _curriculum_hint(depth),
     ]
-    if prompt_style == "action_first":
+    if prompt_style in ACTION_FIRST_PROMPT_STYLES:
         lines.extend(
             [
                 "Action-first instruction: the first assistant turn must be a rotate tool call.",
@@ -678,6 +882,37 @@ def _build_prompt(
             )
         else:
             lines.append("Inspect only after making at least one rotate call.")
+    if prompt_style in NATIVE_TOOL_PROMPT_STYLES:
+        lines.extend(
+            [
+                "Native tool mode: call the rotate tool directly.",
+                "Do not write JSON, prose, or analysis before the tool call.",
+                "The tool schema constrains face to A-L and direction to cw or ccw.",
+            ]
+        )
+    if prompt_style in JSON_ACTION_PROMPT_STYLES:
+        lines.extend(
+            [
+                "/no_think",
+                "Direct-action mode: do not reason, analyze, or explain.",
+                "Return exactly one JSON object and no other text:",
+                '{"tool":"rotate","args":{"face":"A","direction":"cw"}}',
+                "Replace A and cw with your chosen legal face and direction.",
+            ]
+        )
+    if prompt_style in SENSOR_PROMPT_STYLES:
+        lines.append(_sensor_section(puzzle))
+    if prompt_style in TOPOLOGY_PROMPT_STYLES:
+        lines.append(_topology_rules_section())
+    if prompt_style in MATCH_TABLE_PROMPT_STYLES:
+        lines.append(_candidate_neighbor_sets_section())
+    if prompt_style in CHOICE_JSON_PROMPT_STYLES:
+        lines.extend(
+            [
+                "Choose exactly one legal action from this menu and copy it exactly with no bullet:",
+                _json_action_menu(),
+            ]
+        )
     lines.extend(["Initial observation:", puzzle.render_net()])
     return "\n".join(lines)
 
@@ -692,6 +927,68 @@ def _curriculum_hint(depth: int) -> str:
         "Curriculum hint: the puzzle was scrambled by a short sequence of face turns; "
         "reverse progress is measured by solvedness, sticker accuracy, and piece accuracy."
     )
+
+
+def _json_action_menu() -> str:
+    return "\n".join(
+        json.dumps({"tool": "rotate", "args": {"face": face, "direction": direction}})
+        for face in FACES
+        for direction in DIRECTIONS
+    )
+
+
+def _balanced_depth1_moves(seed: int) -> list[Move]:
+    moves = [(face, direction) for face in FACES for direction in DIRECTIONS]
+    rng = Random(seed)
+    rng.shuffle(moves)
+    return moves
+
+
+def _affected_faces(puzzle: MegaminxPuzzle) -> tuple[str, ...]:
+    return tuple(
+        face
+        for face in FACES
+        if any(
+            puzzle.stickers[(face, index)] != face for index in range(1, POSITIONS_PER_FACE)
+        )
+    )
+
+
+def _candidate_neighbor_sets_section() -> str:
+    rows = ["Candidate neighbor sets for face matching:"]
+    for face in FACES:
+        neighbors = " ".join(sorted(DEFAULT_TOPOLOGY.neighbor_rings[face]))
+        rows.append(f"{face}: {neighbors}")
+    return "\n".join(rows)
+
+
+def _sensor_section(puzzle: MegaminxPuzzle) -> str:
+    affected = _affected_faces(puzzle)
+    lines = [
+        "Structured state sensors:",
+        "Affected faces: " + (" ".join(affected) if affected else "none"),
+    ]
+    if affected:
+        lines.append("Affected face summaries:")
+        lines.extend(puzzle.face_line(face) for face in affected)
+    return "\n".join(lines)
+
+
+def _topology_rules_section() -> str:
+    lines = [
+        "Static topology rules:",
+        "Each face lists its five neighbors in ring order.",
+        "A turned face can still look solved because all stickers on that face share one label.",
+        "The evidence is on the five neighboring faces around the turned face.",
+        "For one-turn scrambles, the correct face is the face whose five listed neighbors are the affected faces.",
+        "A cw turn moves neighbor-strip stickers forward through that face's ring: previous neighbor -> next neighbor.",
+        "A ccw turn moves neighbor-strip stickers reverse through that face's ring: next neighbor -> previous neighbor.",
+        "If the visible sticker flow is forward, undo with ccw. If the visible sticker flow is reverse, undo with cw.",
+    ]
+    lines.extend(
+        f"{face}: {' '.join(DEFAULT_TOPOLOGY.neighbor_rings[face])}" for face in FACES
+    )
+    return "\n".join(lines)
 
 
 def _encode_moves(moves: Sequence[Move]) -> str:

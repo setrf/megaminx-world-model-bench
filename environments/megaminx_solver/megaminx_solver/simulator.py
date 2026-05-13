@@ -49,6 +49,10 @@ def parse_move_text(text: str) -> Move:
 
 
 def validate_move(face: str, direction: str) -> Move:
+    if not isinstance(face, str):
+        raise ValueError(f"Face must be a string, got {type(face).__name__}")
+    if not isinstance(direction, str):
+        raise ValueError(f"Direction must be a string, got {type(direction).__name__}")
     face = face.strip().upper()
     direction = direction.strip().lower()
     if face not in FACES:
