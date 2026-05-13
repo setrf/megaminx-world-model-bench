@@ -1,0 +1,72 @@
+name = "megaminx-depth1-qwen4b-sensor"
+model = "Qwen/Qwen3.5-4B"
+max_steps = 100
+batch_size = 128
+rollouts_per_example = 8
+learning_rate = 1e-7
+lora_alpha = 16
+oversampling_factor = 2.0
+max_async_level = 1
+
+[sampling]
+max_tokens = 48
+temperature = 1.1
+
+[sampling.extra_body]
+tool_choice = { type = "function", function = { name = "rotate" } }
+
+[[env]]
+id = "setrf/megaminx-solver"
+version = "0.2.17"
+
+[env.args]
+split = "train_depth1"
+num_examples = 500
+max_turns = 2
+reward_style = "action_gated_curriculum"
+prompt_style = "sensor_match_json_action"
+allow_text_tool_actions = true
+
+[eval]
+interval = 10
+num_examples = 10
+rollouts_per_example = 1
+eval_base_model = true
+
+[[eval.env]]
+id = "setrf/megaminx-solver"
+name = "eval_depth1"
+version = "0.2.17"
+
+[eval.env.args]
+split = "eval_depth1"
+num_examples = 60
+max_turns = 2
+reward_style = "action_gated_curriculum"
+prompt_style = "sensor_match_json_action"
+allow_text_tool_actions = true
+
+[[eval.env]]
+id = "setrf/megaminx-solver"
+name = "easy"
+version = "0.2.17"
+
+[eval.env.args]
+split = "easy"
+num_examples = 60
+reward_style = "action_gated_curriculum"
+prompt_style = "sensor_match_json_action"
+allow_text_tool_actions = true
+
+[[eval.env]]
+id = "setrf/megaminx-solver"
+name = "depth1_base_compare"
+version = "0.2.17"
+
+[eval.env.args]
+split = "depth1"
+num_examples = 60
+max_turns = 2
+reward_style = "action_gated_curriculum"
+prompt_style = "sensor_match_json_action"
+allow_text_tool_actions = true

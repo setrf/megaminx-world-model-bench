@@ -1,0 +1,9 @@
+
+# local runtime artifacts
+outputs/
+environments/*/outputs/
+environments/*/dist/
+**/__pycache__/
+.venv/
+.env
+.DS_Store

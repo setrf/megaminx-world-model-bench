@@ -1,0 +1,29 @@
+name = "megaminx-depth1-qwen35b-a3b-match-rotate-t07"
+model = "Qwen/Qwen3.5-35B-A3B"
+max_steps = 100
+batch_size = 512
+rollouts_per_example = 16
+learning_rate = 1e-7
+lora_alpha = 16
+oversampling_factor = 4.0
+max_async_level = 1
+
+[sampling]
+max_tokens = 48
+temperature = 0.7
+enable_thinking = false
+
+[sampling.extra_body]
+tool_choice = { type = "function", function = { name = "rotate" } }
+
+[[env]]
+id = "setrf/megaminx-solver"
+version = "0.2.17"
+
+[env.args]
+split = "train_depth1"
+num_examples = 500
+max_turns = 2
+reward_style = "action_gated_curriculum"
+prompt_style = "sensor_match_json_action"
+allow_text_tool_actions = true
