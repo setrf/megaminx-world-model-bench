@@ -8,6 +8,8 @@ from megaminx_solver import load_environment
 from megaminx_solver.megaminx_solver import (
     action_gated_curriculum_reward,
     action_gated_dense_reward,
+    action_gated_direction_reward,
+    action_gated_exact_direction_reward,
     action_gated_overlap_reward,
     action_taken,
     first_rotate_correct,
@@ -132,6 +134,33 @@ def test_depth1_split_and_prompt_contract() -> None:
     first_prompt = "\n".join(message["content"] for message in rows[0]["prompt"])
     assert "one-turn scramble" in first_prompt
     assert rows[0]["answer"] not in first_prompt
+
+
+def test_move_budget_can_differ_from_env_max_turns() -> None:
+    async def run() -> None:
+        env = load_environment(split="depth1", num_examples=1, max_turns=2, move_budget=1, seed=34)
+        row = dict(env.get_dataset()[0])
+        assert row["move_budget"] == 1
+        assert env.max_turns == 2
+
+        state = {"task": row}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        first_wrong = next(
+            move
+            for move in ((face, direction) for face in FACES for direction in DIRECTIONS)
+            if move != rollout.inverse_solution[0]
+        )
+        await env.rotate(*first_wrong, rollout)
+        assert rollout.move_count == 1
+        assert rollout.exhausted()
+        assert rollout.finished
+
+        response = await env.rotate(*rollout.inverse_solution[0], rollout)
+        assert "already finished" in response
+        assert rollout.move_count == 1
+
+    asyncio.run(run())
 
 
 def test_depth1_scrambles_are_balanced_across_legal_moves() -> None:
@@ -305,9 +334,13 @@ def test_allow_text_tool_actions_defaults_by_prompt_style() -> None:
         "topology_choice_json_action",
         "sensor_choice_json_action",
         "sensor_match_json_action",
+        "sensor_indexed_match_json_action",
+        "sensor_candidate_strips_json_action",
     ):
         env = load_environment(prompt_style=prompt_style)
         assert env.env_args["allow_text_tool_actions"] is True
+    stage_env = load_environment(split="depth1", prompt_style="stage_face_hint_direction_json_action")
+    assert stage_env.env_args["allow_text_tool_actions"] is True
 
     for prompt_style in (
         "default",
@@ -342,6 +375,142 @@ def test_sensor_match_json_action_prompt_lists_static_candidate_sets_without_ans
     assert row["answer"] not in prompt
     assert row["scramble"] not in prompt
     assert row["inverse_solution"] not in prompt
+
+
+def test_sensor_indexed_match_json_action_prompt_adds_index_guide_without_answer() -> None:
+    env = load_environment(
+        split="depth1",
+        num_examples=1,
+        seed=35,
+        reward_style="action_gated_direction",
+        prompt_style="sensor_indexed_match_json_action",
+        move_budget=1,
+    )
+    row = dict(env.get_dataset()[0])
+    prompt = "\n".join(message["content"] for message in row["prompt"])
+    puzzle = MegaminxPuzzle.solved(DEFAULT_TOPOLOGY)
+    puzzle.apply_moves([(item["face"], item["direction"]) for item in json.loads(row["scramble"])])
+    affected_faces = tuple(
+        face
+        for face in FACES
+        if any(puzzle.stickers[(face, index)] != face for index in range(1, POSITIONS_PER_FACE))
+    )
+
+    assert "/no_think" in prompt
+    assert "Return exactly one JSON object" in prompt
+    assert "Choose exactly one legal action from this menu" in prompt
+    assert "Structured state sensors:" in prompt
+    assert "Static topology rules:" in prompt
+    assert "Candidate neighbor sets for face matching:" in prompt
+    assert "Direction index guide:" in prompt
+    assert "corners c0..c4 and edges e0..e4" in prompt
+    assert "side = ring_N.index(X)" in prompt
+    assert "c[(side-1)%5], e[side], c[side]" in prompt
+    assert "Indexed affected stickers:" in prompt
+    assert prompt.count('"tool": "rotate"') == len(FACES) * len(DIRECTIONS)
+    for face in affected_faces:
+        assert f"{face}: ring={' '.join(DEFAULT_TOPOLOGY.neighbor_rings[face])}" in prompt
+        assert f"{face} changed:" in prompt
+    assert "Highest-overlap face candidates:" not in prompt
+    assert "Neighbor-overlap counts:" not in prompt
+    assert row["answer"] not in prompt
+    assert row["scramble"] not in prompt
+    assert row["inverse_solution"] not in prompt
+
+
+def test_sensor_candidate_strips_json_action_prompt_lists_candidate_strips_without_answer() -> None:
+    env = load_environment(
+        split="depth1",
+        num_examples=1,
+        seed=37,
+        reward_style="action_gated_exact_direction",
+        prompt_style="sensor_candidate_strips_json_action",
+        move_budget=1,
+    )
+    row = dict(env.get_dataset()[0])
+    prompt = "\n".join(message["content"] for message in row["prompt"])
+    puzzle = MegaminxPuzzle.solved(DEFAULT_TOPOLOGY)
+    puzzle.apply_moves([(item["face"], item["direction"]) for item in json.loads(row["scramble"])])
+
+    assert "/no_think" in prompt
+    assert "Return exactly one JSON object" in prompt
+    assert "Choose exactly one legal action from this menu" in prompt
+    assert "Structured state sensors:" in prompt
+    assert "Static topology rules:" in prompt
+    assert "Candidate neighbor sets for face matching:" in prompt
+    assert "Direction index guide:" in prompt
+    assert "Candidate-local moved strips:" in prompt
+    assert prompt.count('"tool": "rotate"') == len(FACES) * len(DIRECTIONS)
+    for candidate in FACES:
+        ring = DEFAULT_TOPOLOGY.neighbor_rings[candidate]
+        assert f"{candidate}: ring={' '.join(ring)}" in prompt
+        for neighbor in ring:
+            side = DEFAULT_TOPOLOGY.neighbor_rings[neighbor].index(candidate)
+            strip_text = " ".join(
+                [
+                    f"c{(side - 1) % 5}={puzzle.stickers[(neighbor, 1 + ((side - 1) % 5))]}",
+                    f"e{side}={puzzle.stickers[(neighbor, 6 + side)]}",
+                    f"c{side}={puzzle.stickers[(neighbor, 1 + side)]}",
+                ]
+            )
+            assert f"{neighbor}[{strip_text}]" in prompt
+    assert "Highest-overlap face candidates:" not in prompt
+    assert "Neighbor-overlap counts:" not in prompt
+    assert row["answer"] not in prompt
+    assert row["scramble"] not in prompt
+    assert row["inverse_solution"] not in prompt
+
+
+def test_stage_face_hint_direction_json_action_prompt_is_staged_and_two_choice() -> None:
+    env = load_environment(
+        split="depth1",
+        num_examples=1,
+        seed=39,
+        reward_style="action_gated_exact_direction",
+        prompt_style="stage_face_hint_direction_json_action",
+        move_budget=1,
+    )
+    row = dict(env.get_dataset()[0])
+    prompt = "\n".join(message["content"] for message in row["prompt"])
+    inverse_solution = json.loads(row["inverse_solution"])
+    hinted_face = inverse_solution[0]["face"]
+
+    assert "Staged face hint: affected faces identify the turned face." in prompt
+    assert f"Use face {hinted_face}; infer only whether the solving direction is cw or ccw." in prompt
+    assert f"Only choose rotate actions on face {hinted_face}." in prompt
+    assert "Candidate-local moved strips:" in prompt
+    assert prompt.count('"tool": "rotate"') == len(DIRECTIONS)
+    for direction in DIRECTIONS:
+        assert json.dumps(
+            {"tool": "rotate", "args": {"face": hinted_face, "direction": direction}}
+        ) in prompt
+    for face in FACES:
+        if face == hinted_face:
+            continue
+        for direction in DIRECTIONS:
+            assert json.dumps(
+                {"tool": "rotate", "args": {"face": face, "direction": direction}}
+            ) not in prompt
+    assert "Highest-overlap face candidates:" not in prompt
+    assert "Neighbor-overlap counts:" not in prompt
+    assert row["answer"] not in prompt
+    assert row["scramble"] not in prompt
+    assert row["inverse_solution"] not in prompt
+
+
+def test_stage_face_hint_direction_json_action_rejects_non_depth1_splits() -> None:
+    try:
+        load_environment(
+            split="easy",
+            num_examples=3,
+            reward_style="action_gated_exact_direction",
+            prompt_style="stage_face_hint_direction_json_action",
+            move_budget=1,
+        )
+    except ValueError as error:
+        assert "only defined for depth-1" in str(error)
+    else:
+        raise AssertionError("Expected staged face-hint prompt to reject non-depth1 split")
 
 
 def test_choice_json_action_prompt_style_lists_all_legal_actions() -> None:
@@ -462,6 +631,133 @@ def test_action_gated_curriculum_gives_partial_first_move_signal() -> None:
         assert await first_rotate_direction_correct(state) == 0.0
         assert await first_rotate_face_correct(state) == 1.0
         assert 0.35 <= await action_gated_curriculum_reward(state) <= 0.65
+
+    asyncio.run(run())
+
+
+def test_action_gated_direction_rewards_direction_separately() -> None:
+    async def run() -> None:
+        wrong_direction_env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=36,
+            reward_style="action_gated_direction",
+            prompt_style="sensor_indexed_match_json_action",
+            max_turns=2,
+            move_budget=1,
+        )
+        wrong_direction_state = {"task": dict(wrong_direction_env.get_dataset()[0])}
+        await wrong_direction_env.setup_state(wrong_direction_state)
+        wrong_direction_rollout = wrong_direction_state["megaminx"]
+        target_face, target_direction = wrong_direction_rollout.inverse_solution[0]
+        wrong_direction = next(direction for direction in DIRECTIONS if direction != target_direction)
+
+        assert await reward_style(wrong_direction_state) == 4.0
+        assert await action_gated_direction_reward(wrong_direction_state) == 0.0
+        await wrong_direction_env.rotate(target_face, wrong_direction, wrong_direction_rollout)
+        wrong_direction_reward = await action_gated_direction_reward(wrong_direction_state)
+        assert await first_rotate_face_correct(wrong_direction_state) == 1.0
+        assert await first_rotate_direction_correct(wrong_direction_state) == 0.0
+        assert 0.20 <= wrong_direction_reward <= 0.35
+
+        wrong_face_env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=36,
+            reward_style="action_gated_direction",
+            prompt_style="sensor_indexed_match_json_action",
+            max_turns=2,
+            move_budget=1,
+        )
+        wrong_face_state = {"task": dict(wrong_face_env.get_dataset()[0])}
+        await wrong_face_env.setup_state(wrong_face_state)
+        wrong_face_rollout = wrong_face_state["megaminx"]
+        wrong_face = next(face for face in FACES if face != target_face)
+        await wrong_face_env.rotate(wrong_face, target_direction, wrong_face_rollout)
+        wrong_face_reward = await action_gated_direction_reward(wrong_face_state)
+        assert await first_rotate_face_correct(wrong_face_state) == 0.0
+        assert await first_rotate_direction_correct(wrong_face_state) == 1.0
+        assert wrong_face_reward < wrong_direction_reward
+
+        solved_env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=36,
+            reward_style="action_gated_direction",
+            prompt_style="sensor_indexed_match_json_action",
+            max_turns=2,
+            move_budget=1,
+        )
+        solved_state = {"task": dict(solved_env.get_dataset()[0])}
+        await solved_env.setup_state(solved_state)
+        solved_rollout = solved_state["megaminx"]
+        await solved_env.rotate(*solved_rollout.inverse_solution[0], solved_rollout)
+        assert solved_rollout.solved()
+        assert await action_gated_direction_reward(solved_state) == 1.0
+
+    asyncio.run(run())
+
+
+def test_action_gated_exact_direction_ignores_wrong_face_direction_bonus() -> None:
+    async def run() -> None:
+        target_env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=38,
+            reward_style="action_gated_exact_direction",
+            prompt_style="sensor_candidate_strips_json_action",
+            max_turns=2,
+            move_budget=1,
+        )
+        target_state = {"task": dict(target_env.get_dataset()[0])}
+        await target_env.setup_state(target_state)
+        target_rollout = target_state["megaminx"]
+        target_face, target_direction = target_rollout.inverse_solution[0]
+        wrong_direction = next(direction for direction in DIRECTIONS if direction != target_direction)
+
+        assert await reward_style(target_state) == 5.0
+        assert await action_gated_exact_direction_reward(target_state) == 0.0
+        await target_env.rotate(target_face, wrong_direction, target_rollout)
+        target_reward = await action_gated_exact_direction_reward(target_state)
+        assert await first_rotate_face_correct(target_state) == 1.0
+        assert await first_rotate_direction_correct(target_state) == 0.0
+        assert 0.14 <= target_reward <= 0.16
+
+        wrong_face_env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=38,
+            reward_style="action_gated_exact_direction",
+            prompt_style="sensor_candidate_strips_json_action",
+            max_turns=2,
+            move_budget=1,
+        )
+        wrong_face_state = {"task": dict(wrong_face_env.get_dataset()[0])}
+        await wrong_face_env.setup_state(wrong_face_state)
+        wrong_face_rollout = wrong_face_state["megaminx"]
+        wrong_face = next(face for face in FACES if face != target_face)
+        await wrong_face_env.rotate(wrong_face, target_direction, wrong_face_rollout)
+        wrong_face_reward = await action_gated_exact_direction_reward(wrong_face_state)
+        assert await first_rotate_face_correct(wrong_face_state) == 0.0
+        assert await first_rotate_direction_correct(wrong_face_state) == 1.0
+        assert wrong_face_reward == 0.02
+        assert wrong_face_reward < target_reward
+
+        solved_env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=38,
+            reward_style="action_gated_exact_direction",
+            prompt_style="sensor_candidate_strips_json_action",
+            max_turns=2,
+            move_budget=1,
+        )
+        solved_state = {"task": dict(solved_env.get_dataset()[0])}
+        await solved_env.setup_state(solved_state)
+        solved_rollout = solved_state["megaminx"]
+        await solved_env.rotate(*solved_rollout.inverse_solution[0], solved_rollout)
+        assert solved_rollout.solved()
+        assert await action_gated_exact_direction_reward(solved_state) == 1.0
 
     asyncio.run(run())
 
@@ -727,3 +1023,4 @@ def test_tool_schema_and_metadata_path() -> None:
     assert env.env_args["reward_style"] == "dense"
     assert env.env_args["prompt_style"] == "default"
     assert env.env_args["allow_text_tool_actions"] is False
+    assert env.env_args["move_budget"] is None

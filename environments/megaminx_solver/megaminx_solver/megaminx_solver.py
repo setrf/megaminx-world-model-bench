@@ -39,6 +39,8 @@ REWARD_STYLES = {
     "action_gated_dense",
     "action_gated_curriculum",
     "action_gated_overlap",
+    "action_gated_direction",
+    "action_gated_exact_direction",
 }
 PROMPT_STYLES = {
     "default",
@@ -48,6 +50,9 @@ PROMPT_STYLES = {
     "topology_choice_json_action",
     "sensor_choice_json_action",
     "sensor_match_json_action",
+    "sensor_indexed_match_json_action",
+    "sensor_candidate_strips_json_action",
+    "stage_face_hint_direction_json_action",
     "native_action",
     "topology_native_tool",
     "sensor_native_tool",
@@ -61,6 +66,9 @@ ACTION_FIRST_PROMPT_STYLES = {
     "topology_choice_json_action",
     "sensor_choice_json_action",
     "sensor_match_json_action",
+    "sensor_indexed_match_json_action",
+    "sensor_candidate_strips_json_action",
+    "stage_face_hint_direction_json_action",
     "native_action",
     "topology_native_tool",
     "sensor_native_tool",
@@ -72,17 +80,26 @@ JSON_ACTION_PROMPT_STYLES = {
     "topology_choice_json_action",
     "sensor_choice_json_action",
     "sensor_match_json_action",
+    "sensor_indexed_match_json_action",
+    "sensor_candidate_strips_json_action",
+    "stage_face_hint_direction_json_action",
 }
 CHOICE_JSON_PROMPT_STYLES = {
     "choice_json_action",
     "topology_choice_json_action",
     "sensor_choice_json_action",
     "sensor_match_json_action",
+    "sensor_indexed_match_json_action",
+    "sensor_candidate_strips_json_action",
+    "stage_face_hint_direction_json_action",
 }
 TOPOLOGY_PROMPT_STYLES = {
     "topology_choice_json_action",
     "sensor_choice_json_action",
     "sensor_match_json_action",
+    "sensor_indexed_match_json_action",
+    "sensor_candidate_strips_json_action",
+    "stage_face_hint_direction_json_action",
     "topology_native_tool",
     "sensor_native_tool",
     "sensor_match_native_tool",
@@ -90,12 +107,30 @@ TOPOLOGY_PROMPT_STYLES = {
 SENSOR_PROMPT_STYLES = {
     "sensor_choice_json_action",
     "sensor_match_json_action",
+    "sensor_indexed_match_json_action",
+    "sensor_candidate_strips_json_action",
+    "stage_face_hint_direction_json_action",
     "sensor_native_tool",
     "sensor_match_native_tool",
 }
 MATCH_TABLE_PROMPT_STYLES = {
     "sensor_match_json_action",
+    "sensor_indexed_match_json_action",
+    "sensor_candidate_strips_json_action",
+    "stage_face_hint_direction_json_action",
     "sensor_match_native_tool",
+}
+INDEXED_DIRECTION_PROMPT_STYLES = {
+    "sensor_indexed_match_json_action",
+    "sensor_candidate_strips_json_action",
+    "stage_face_hint_direction_json_action",
+}
+CANDIDATE_STRIPS_PROMPT_STYLES = {
+    "sensor_candidate_strips_json_action",
+    "stage_face_hint_direction_json_action",
+}
+FACE_HINT_PROMPT_STYLES = {
+    "stage_face_hint_direction_json_action",
 }
 NATIVE_TOOL_PROMPT_STYLES = {
     "native_action",
@@ -284,6 +319,8 @@ async def reward_style(state: vf.State) -> float:
         "action_gated_dense": 1.0,
         "action_gated_curriculum": 2.0,
         "action_gated_overlap": 3.0,
+        "action_gated_direction": 4.0,
+        "action_gated_exact_direction": 5.0,
     }.get(rollout.reward_style, 0.0)
 
 
@@ -363,6 +400,52 @@ async def action_gated_overlap_reward(state: vf.State) -> float:
     progress_delta = max(0.0, 0.7 * sticker_delta + 0.3 * piece_delta)
     reward += min(0.10, progress_delta)
     return min(0.65, reward)
+
+
+async def action_gated_direction_reward(state: vf.State) -> float:
+    rollout = _rollout_from_state(state)
+    if not rollout:
+        return 0.0
+    if rollout.solved():
+        return 1.0
+    if rollout.move_count == 0 or rollout.first_rotate is None:
+        return 0.0
+
+    reward = 0.02
+    if rollout.inverse_solution:
+        target_face, target_direction = rollout.inverse_solution[0]
+        first_face, first_direction = rollout.first_rotate
+        if first_face == target_face:
+            reward += 0.20
+        if first_direction == target_direction:
+            reward += 0.08
+
+    sticker_delta = rollout.puzzle.sticker_accuracy() - rollout.initial_sticker_accuracy
+    piece_delta = rollout.puzzle.piece_accuracy() - rollout.initial_piece_accuracy
+    progress_delta = max(0.0, 0.7 * sticker_delta + 0.3 * piece_delta)
+    reward += min(0.05, progress_delta)
+    return min(0.35, reward)
+
+
+async def action_gated_exact_direction_reward(state: vf.State) -> float:
+    rollout = _rollout_from_state(state)
+    if not rollout:
+        return 0.0
+    if rollout.solved():
+        return 1.0
+    if rollout.move_count == 0 or rollout.first_rotate is None:
+        return 0.0
+
+    reward = 0.02
+    if rollout.inverse_solution:
+        target_face, target_direction = rollout.inverse_solution[0]
+        first_face, first_direction = rollout.first_rotate
+        if first_face == target_face:
+            reward += 0.13
+            if first_direction == target_direction:
+                reward += 0.20
+
+    return min(0.35, reward)
 
 
 class MegaminxEnv(vf.StatefulToolEnv):
@@ -553,6 +636,7 @@ def load_environment(
     num_examples: int = 200,
     seed: int = 42,
     max_turns: int | None = None,
+    move_budget: int | None = None,
     reward_style: str = "dense",
     prompt_style: str = "default",
     allow_text_tool_actions: bool | None = None,
@@ -567,6 +651,7 @@ def load_environment(
         num_examples=num_examples,
         seed=seed,
         max_turns=max_turns,
+        move_budget=move_budget,
         reward_style=reward_style,
         prompt_style=prompt_style,
     )
@@ -586,6 +671,7 @@ def load_environment(
             "num_examples": num_examples,
             "seed": seed,
             "max_turns": max_turns,
+            "move_budget": move_budget,
             "reward_style": reward_style,
             "prompt_style": prompt_style,
             "allow_text_tool_actions": allow_text_tool_actions,
@@ -600,6 +686,7 @@ def build_dataset(
     num_examples: int,
     seed: int,
     max_turns: int | None,
+    move_budget: int | None = None,
     reward_style: str = "dense",
     prompt_style: str = "default",
 ) -> Dataset:
@@ -609,6 +696,12 @@ def build_dataset(
     min_depth, max_depth = _resolve_depths(split, min_depth, max_depth)
     if min_depth < 0 or max_depth < min_depth:
         raise ValueError("Expected 0 <= min_depth <= max_depth")
+    if prompt_style in FACE_HINT_PROMPT_STYLES and (min_depth, max_depth) != (1, 1):
+        raise ValueError("stage face-hint prompt styles are only defined for depth-1 splits")
+    if max_turns is not None and max_turns <= 0:
+        raise ValueError("max_turns must be positive when provided")
+    if move_budget is not None and move_budget <= 0:
+        raise ValueError("move_budget must be positive when provided")
 
     rng = Random(seed)
     rows: list[dict[str, Any]] = []
@@ -624,7 +717,9 @@ def build_dataset(
         else:
             scramble = generate_scramble(depth, rng)
         inverse_solution = inverse_moves(scramble)
-        move_budget = max_turns if max_turns is not None else min(32, 2 * depth + 4)
+        row_move_budget = move_budget if move_budget is not None else (
+            max_turns if max_turns is not None else min(32, 2 * depth + 4)
+        )
         puzzle = MegaminxPuzzle.solved(DEFAULT_TOPOLOGY)
         puzzle.apply_moves(scramble)
         rows.append(
@@ -632,7 +727,7 @@ def build_dataset(
                 index=index,
                 split=split,
                 depth=depth,
-                move_budget=int(move_budget),
+                move_budget=int(row_move_budget),
                 puzzle=puzzle,
                 scramble=scramble,
                 inverse_solution=inverse_solution,
@@ -753,6 +848,10 @@ def _build_rubric(reward_style_name: str) -> vf.Rubric:
     reward_func = (
         action_gated_overlap_reward
         if reward_style_name == "action_gated_overlap"
+        else action_gated_exact_direction_reward
+        if reward_style_name == "action_gated_exact_direction"
+        else action_gated_direction_reward
+        if reward_style_name == "action_gated_direction"
         else action_gated_curriculum_reward
         if reward_style_name == "action_gated_curriculum"
         else action_gated_dense_reward
@@ -859,6 +958,11 @@ def _build_prompt(
     puzzle: MegaminxPuzzle,
     prompt_style: str,
 ) -> str:
+    face_hint = (
+        _face_hint_from_affected_faces(puzzle)
+        if prompt_style in FACE_HINT_PROMPT_STYLES
+        else None
+    )
     lines = [
         f"Example: {split}-{index:05d}",
         f"Scramble depth: {depth}",
@@ -906,11 +1010,18 @@ def _build_prompt(
         lines.append(_topology_rules_section())
     if prompt_style in MATCH_TABLE_PROMPT_STYLES:
         lines.append(_candidate_neighbor_sets_section())
+    if prompt_style in INDEXED_DIRECTION_PROMPT_STYLES:
+        lines.append(_indexed_direction_section(puzzle))
+    if prompt_style in CANDIDATE_STRIPS_PROMPT_STYLES:
+        lines.append(_candidate_strips_section(puzzle))
+    if prompt_style in FACE_HINT_PROMPT_STYLES:
+        lines.append(_face_hint_section(face_hint))
     if prompt_style in CHOICE_JSON_PROMPT_STYLES:
+        action_menu = _json_action_menu_for_face(face_hint) if face_hint else _json_action_menu()
         lines.extend(
             [
                 "Choose exactly one legal action from this menu and copy it exactly with no bullet:",
-                _json_action_menu(),
+                action_menu,
             ]
         )
     lines.extend(["Initial observation:", puzzle.render_net()])
@@ -933,6 +1044,13 @@ def _json_action_menu() -> str:
     return "\n".join(
         json.dumps({"tool": "rotate", "args": {"face": face, "direction": direction}})
         for face in FACES
+        for direction in DIRECTIONS
+    )
+
+
+def _json_action_menu_for_face(face: str) -> str:
+    return "\n".join(
+        json.dumps({"tool": "rotate", "args": {"face": face, "direction": direction}})
         for direction in DIRECTIONS
     )
 
@@ -972,6 +1090,96 @@ def _sensor_section(puzzle: MegaminxPuzzle) -> str:
         lines.append("Affected face summaries:")
         lines.extend(puzzle.face_line(face) for face in affected)
     return "\n".join(lines)
+
+
+def _indexed_direction_section(puzzle: MegaminxPuzzle) -> str:
+    affected = _affected_faces(puzzle)
+    lines = [
+        "Direction index guide:",
+        "Face strings are indexed left to right: corners c0..c4 and edges e0..e4.",
+        "On any neighbor face N, edge e_i borders ring_N[i].",
+        "On any neighbor face N, corner c_i is between ring_N[i] and ring_N[(i+1)%5].",
+        (
+            "For a candidate turned face X on neighbor N, side = ring_N.index(X); "
+            "X's visible moved strip on N is c[(side-1)%5], e[side], c[side]."
+        ),
+        "Compare those indexed strips around candidate X's ring to infer cw vs ccw.",
+        "Indexed affected stickers:",
+    ]
+    if not affected:
+        lines.append("none")
+        return "\n".join(lines)
+
+    for face in affected:
+        ring = " ".join(DEFAULT_TOPOLOGY.neighbor_rings[face])
+        corners = " ".join(
+            f"c{side}={puzzle.stickers[(face, 1 + side)]}" for side in range(5)
+        )
+        edges = " ".join(
+            f"e{side}={puzzle.stickers[(face, 6 + side)]}" for side in range(5)
+        )
+        changed = []
+        for side in range(5):
+            corner_color = puzzle.stickers[(face, 1 + side)]
+            edge_color = puzzle.stickers[(face, 6 + side)]
+            if corner_color != face:
+                changed.append(f"c{side}={corner_color}")
+            if edge_color != face:
+                changed.append(f"e{side}={edge_color}")
+        lines.append(f"{face}: ring={ring} | {corners} | {edges}")
+        lines.append(f"{face} changed: " + (" ".join(changed) if changed else "none"))
+    return "\n".join(lines)
+
+
+def _candidate_strips_section(puzzle: MegaminxPuzzle) -> str:
+    lines = [
+        "Candidate-local moved strips:",
+        (
+            "For candidate face X, each row lists X's five neighbors in ring order and "
+            "the three indexed stickers on each neighbor that touch X."
+        ),
+    ]
+    for candidate in FACES:
+        ring = DEFAULT_TOPOLOGY.neighbor_rings[candidate]
+        parts = [f"ring={' '.join(ring)}"]
+        for neighbor in ring:
+            side = DEFAULT_TOPOLOGY.neighbor_rings[neighbor].index(candidate)
+            strip = (
+                ("c", (side - 1) % 5, puzzle.stickers[(neighbor, 1 + ((side - 1) % 5))]),
+                ("e", side, puzzle.stickers[(neighbor, 6 + side)]),
+                ("c", side, puzzle.stickers[(neighbor, 1 + side)]),
+            )
+            strip_text = " ".join(f"{kind}{index}={color}" for kind, index, color in strip)
+            parts.append(f"{neighbor}[{strip_text}]")
+        lines.append(f"{candidate}: " + " | ".join(parts))
+    return "\n".join(lines)
+
+
+def _face_hint_from_affected_faces(puzzle: MegaminxPuzzle) -> str | None:
+    affected = set(_affected_faces(puzzle))
+    matches = [
+        face
+        for face in FACES
+        if set(DEFAULT_TOPOLOGY.neighbor_rings[face]) == affected
+    ]
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
+def _face_hint_section(face: str | None) -> str:
+    if face is None:
+        return (
+            "Staged face hint: no single face is identified from affected faces; "
+            "use the full topology evidence."
+        )
+    return "\n".join(
+        [
+            "Staged face hint: affected faces identify the turned face.",
+            f"Use face {face}; infer only whether the solving direction is cw or ccw.",
+            f"Only choose rotate actions on face {face}.",
+        ]
+    )
 
 
 def _topology_rules_section() -> str:
