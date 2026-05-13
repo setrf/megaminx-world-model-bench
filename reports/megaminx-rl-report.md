@@ -23,7 +23,7 @@ Current state:
 | Latest wheel SHA256 | `49fdb2a249a743e33754275b5b0eeff4baabbda063cde571a1cab0683be8026a` |
 | Visibility | Still reports `PRIVATE` after `--visibility PUBLIC`; see blocker below |
 | Best clean base eval | v0.2.17 static match-table prompt, `Qwen/Qwen3.5-35B-A3B`, solved rate `0.442` |
-| Active hosted run | `fgw7xi5zj7cx6nthnggi72an`, v0.2.17 match-table small-batch retry |
+| Active hosted run | `x1y62onvjc1sscmxpwdobdxm`, v0.2.17 match-table train-first retry |
 
 Finish status: environment release and validation are substantially complete, but the full finish criterion is not met yet because Hub visibility still reports private and no trained checkpoint has beaten the v0.2.17 base baseline. The aggressive v0.2.17 hosted RL run was stopped after reward fell below base and off-policy drift climbed. A smaller retry is now running.
 
@@ -273,7 +273,8 @@ prime eval run setrf/megaminx-solver@0.2.17 \
 | `qrfsf3jrjjo3l99lvzub6u1q` | `0.2.14` | Qwen 35B-A3B | enum schema + forced rotate, `T=0.7` | `STOPPED` | `$17.33` | Illegal args fixed, but no learning over baseline by step 5 |
 | `qn8n2ngda0sbigh1xuoq1aua` | `0.2.17` | Qwen 35B-A3B | match table + forced rotate, `T=0.7`, aggressive batch | `STOPPED` | `$18.44` | Clean rollouts but below base; stopped after off-policy drift reached `3.33` by step 6 |
 | `fef0tabjbbe8jz2qnwj3jq3j` | `0.2.17` | Qwen 35B-A3B | match table + forced rotate, small batch, lower LR, oversampling `2.0` | `STOPPED` | `$0.17` | Stopped before training so the config could be relaunched with oversampling `1.0` |
-| `fgw7xi5zj7cx6nthnggi72an` | `0.2.17` | Qwen 35B-A3B | match table + forced rotate, small batch, lower LR, oversampling `1.0` | `RUNNING` | `$0+` | Active retry: batch 128, rollouts 8, LR `5e-8`, max async level `1` |
+| `fgw7xi5zj7cx6nthnggi72an` | `0.2.17` | Qwen 35B-A3B | match table + forced rotate, small batch, lower LR, oversampling `1.0`, eval block enabled | `STOPPED` | `$0.46` | Stopped before training because step-0 eval was slow; next retry trains first and evaluates checkpoints after |
+| `x1y62onvjc1sscmxpwdobdxm` | `0.2.17` | Qwen 35B-A3B | match table + forced rotate, train-first, lower LR, oversampling `1.0` | `PENDING` | `$0+` | Active retry: no startup eval block |
 
 Stopped aggressive run command:
 
@@ -322,7 +323,7 @@ prime train configs/rl/megaminx-depth1-qwen-35b-a3b-sensor-sync.toml --yes --pla
 
 Active retry config:
 
-- run `fgw7xi5zj7cx6nthnggi72an`
+- run `x1y62onvjc1sscmxpwdobdxm`
 - model `Qwen/Qwen3.5-35B-A3B`
 - env `setrf/megaminx-solver@0.2.17`
 - split `train_depth1`
@@ -337,7 +338,7 @@ Active retry config:
 - max async level `1` because the Hosted Training backend rejects `0` even though local config parsing accepts it
 - sampling max tokens `48`
 - temperature `0.7`
-- eval every `5` steps on `eval_depth1` and `easy`
+- no startup eval block; evaluate depth-1/easy manually after a checkpoint exists
 
 Monitoring commands:
 
