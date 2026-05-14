@@ -59,7 +59,7 @@ deterministic oracle JSONL exporter for the next SFT/warm-start lane.
 | Latest pushed version | `0.2.56` |
 | Latest wheel SHA256 | `f52a3858518f234c4a2df310ab465b37b536fc28ab3ad2e034373109f49e7106` |
 | Latest install check | `prime env install megaminx-solver --plain` and Hub push succeeded |
-| Latest local tests | `uv run pytest -q` -> `122 passed in 41.38s` |
+| Latest local tests | `uv run pytest -q` -> `127 passed in 44.53s` |
 | Latest oracle export audit | `1024/1024` v0.2.56 oracle trajectories solved; no prompt-id leakage |
 | Live wallet status | `prime wallet --plain` on 2026-05-14 06:41 Istanbul reported balance `$-0.80` |
 | Visibility | CLI/API still report `PRIVATE` after public pushes |
@@ -242,7 +242,7 @@ uv run pytest -q
 Result:
 
 ```text
-122 passed in 41.38s
+127 passed in 44.53s
 ```.
 
 Coverage includes:
@@ -611,7 +611,7 @@ Lifecycle status:
 | Hub hash | `8a1d0168b96c` |
 | Hub action | `kioezfzz4ji4uquyhm0grzwc`, `SUCCESS` |
 | Wheel SHA256 | `f52a3858518f234c4a2df310ab465b37b536fc28ab3ad2e034373109f49e7106` |
-| Tests | `uv run pytest -q` -> `122 passed in 41.38s` |
+| Tests | `uv run pytest -q` -> `127 passed in 44.53s` |
 | Exporter smoke | `uv run python scripts/export_oracle_trajectories.py --num-examples 4 ...` wrote solved v0.2.56 JSONL |
 | Exporter audit | `uv run python scripts/export_oracle_trajectories.py --num-examples 1024 --seed 64 ...` wrote `/tmp/megaminx-oracle-v056-1024.jsonl`; all `1024` rows had `env_version=0.2.56`, exactly two actions, stable turn-local tool-call ids, reward `1.0`, solved `true`, and no `Example:`/row-id prompt leakage |
 | Exporter summary | `uv run python scripts/summarize_oracle_trajectories.py /tmp/megaminx-oracle-v056-1024.jsonl` validates the JSONL and reports rows, SHA256, slot/direction balance, rewards, solved counts, and prompt-leak count |
@@ -619,6 +619,7 @@ Lifecycle status:
 | SFT validation | `uv run python scripts/validate_sft_jsonl.py /tmp/megaminx-oracle-v056-1024-sft.jsonl` reports `1024` rows, `select_candidate` tools, no forbidden payload fields, no prompt leakage, and the same SFT SHA256 |
 | OpenAI-style SFT projection | `uv run python scripts/project_sft_to_openai_tools.py /tmp/megaminx-oracle-v056-1024-sft.jsonl --output /tmp/megaminx-oracle-v056-1024-sft-openai.jsonl` writes nested `function` tool-call records with SHA256 `2ed51c37e74e32d7944bc7ef14d2bc0d059886698c88d4fbac1e17fbd2604627`; size `7.2M` |
 | Local SFT warm-start scaffold | `uv run python scripts/train_sft_lora.py --config configs/sft/megaminx-v056-qwen08b-tail-solve-smoke.toml --dry-run` renders Qwen native chat/tool-call transcripts, masks loss to assistant tool-call spans, and validates config/data; `uv run python scripts/train_sft_lora.py --config configs/sft/megaminx-v056-qwen08b-tail-solve-smoke.toml --max-samples 2 --max-steps 1 --output-dir /tmp/megaminx-v056-qwen08b-sft-smoke-1step-2048` completed one local MPS optimizer step and saved a LoRA adapter; 4096 tokens OOMed on this Mac, so full 9B training uses `configs/sft/megaminx-v056-qwen9b-tail-solve-lora.toml` on a larger GPU machine |
+| Offline SFT adapter eval | `uv run python scripts/eval_sft_lora_offline.py --dry-run --num-examples 2` builds the v0.2.56 heldout/heldout2 prompt sets without Prime; `uv run python scripts/eval_sft_lora_offline.py --oracle --heldout-set heldout --num-examples 2` verifies the local evaluator with `strict_two_call_correct_rate=1.0` |
 | Next-run readiness | `uv run python scripts/check_next_run_readiness.py` passes the four matched v0.2.56 probe configs, canonical oracle JSONL, and canonical SFT JSONL; Prime access/wallet is skipped unless `--check-prime` is used |
 | Exporter determinism | Re-running the 1,024-row export produced `cmp_exit=0`; SHA256 `1038afa6958030832c028840dafc22fc3724206461608e2ed809c90fa9695e7b`; size `8.1M` |
 | Focused tail-solve tests | `uv run pytest -q tests/test_megaminx_solver.py::test_candidate_relative_flow_rule_solve2_tail_reward_and_balanced_second_slots tests/test_megaminx_solver.py::test_action_gated_candidate_path_tail_solve_rewards_second_step_signal` -> `2 passed in 2.00s`; oracle/SFT/readiness CLI regressions are included in the full `122 passed` suite |
@@ -655,6 +656,8 @@ uv run python scripts/validate_sft_jsonl.py /tmp/megaminx-oracle-v056-1024-sft.j
 uv run python scripts/project_sft_to_openai_tools.py /tmp/megaminx-oracle-v056-1024-sft.jsonl --output /tmp/megaminx-oracle-v056-1024-sft-openai.jsonl
 uv run python scripts/train_sft_lora.py --config configs/sft/megaminx-v056-qwen08b-tail-solve-smoke.toml --dry-run
 uv run python scripts/train_sft_lora.py --config configs/sft/megaminx-v056-qwen9b-tail-solve-lora.toml
+uv run python scripts/eval_sft_lora_offline.py --dry-run --num-examples 2
+uv run python scripts/eval_sft_lora_offline.py --oracle --heldout-set heldout --num-examples 2
 uv run python scripts/check_next_run_readiness.py
 uv run python scripts/export_oracle_trajectories.py --num-examples 1024 --seed 64 --split train_candidate_relative_flow_rule_tail_solve_depth2 --output /tmp/megaminx-oracle-v056-1024-rerun.jsonl
 cmp -s /tmp/megaminx-oracle-v056-1024.jsonl /tmp/megaminx-oracle-v056-1024-rerun.jsonl; echo cmp_exit=$?
@@ -716,7 +719,7 @@ Concrete success criteria from the active goal and finish plan:
 | Hidden answer not leaked in prompts | Prompt tests assert no direct answer leakage; scramble/inverse stay in metadata | Passed |
 | v0.2.56 visible-id shortcut fix | Prompt hides numeric row ids; refreshed second slots are derived from hidden metadata; visible-id second-slot shortcut test passes | Passed |
 | Oracle warm-start export | `scripts/export_oracle_trajectories.py` exports solved v0.2.56 two-call JSONL and has a deterministic CLI regression test | Passed |
-| Unit/environment tests cover simulator and RL reward behavior | `uv run pytest -q` -> `122 passed in 41.38s` | Passed |
+| Unit/environment tests cover simulator and RL reward behavior | `uv run pytest -q` -> `127 passed in 44.53s` | Passed |
 | Hub package pushed and installable | `prime env status setrf/megaminx-solver --plain` reports latest version `0.2.56`; install command succeeds | Passed |
 | Hub environment public | CLI still reports visibility `PRIVATE` after public pushes; direct API PATCH attempts against the env id and slug return HTTP 405 | Blocked |
 | Hosted RL run completed | `bg0vbir6u6d521qcr8kghvvv` completed with final online reward `0.7335`, solved `0.6615`, zero tool/protocol/env errors | Passed |
@@ -741,7 +744,7 @@ The repository release steps are complete: CI passed, PR `#3` is merged to
 | --- | --- |
 | Public Hub env works | Partially blocked: owner-auth works, visibility still reports `PRIVATE` |
 | Latest Hub package installs | Passed at `0.2.56` |
-| Local tests pass | Passed: `122 passed in 41.38s` |
+| Local tests pass | Passed: `127 passed in 44.53s` |
 | Env errors in native probes | Passed: zero errors |
 | Native tool calls nonzero | Passed: depth-1 probes use `1.0`; v0.2.54/v0.2.55 depth-2 probes use `2.0` |
 | Trained checkpoint improves depth-1 solved by `+30pp` | Failed: best native gain is about `+2.52pp` |
@@ -837,7 +840,7 @@ Latest package:
 | --- | --- |
 | Hub package | `setrf/megaminx-solver@0.2.56` |
 | Wheel SHA256 | `f52a3858518f234c4a2df310ab465b37b536fc28ab3ad2e034373109f49e7106` |
-| Local tests | `uv run pytest -q` -> `122 passed in 41.38s` |
+| Local tests | `uv run pytest -q` -> `127 passed in 44.53s` |
 
 Key attempts:
 

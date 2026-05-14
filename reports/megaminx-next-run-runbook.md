@@ -188,6 +188,8 @@ uv run python scripts/train_sft_lora.py \
   --max-samples 2 \
   --max-steps 1 \
   --output-dir /tmp/megaminx-v056-qwen08b-sft-smoke-1step-2048
+uv run python scripts/eval_sft_lora_offline.py --dry-run --num-examples 2
+uv run python scripts/eval_sft_lora_offline.py --oracle --heldout-set heldout --num-examples 2
 uv run python scripts/train_sft_lora.py \
   --config configs/sft/megaminx-v056-qwen9b-tail-solve-lora.toml
 ```
@@ -200,6 +202,21 @@ shrink the intended run. A one-step local MPS smoke on 0.8B completed at 2048
 tokens and saved `/tmp/megaminx-v056-qwen08b-sft-smoke-1step-2048`; 4096 tokens
 hit the Mac memory ceiling. Run the full 9B config on a larger CUDA GPU box
 with `torch`, `transformers`, and `peft`.
+
+After any adapter train, evaluate it locally before more PPO:
+
+```bash
+uv run python scripts/eval_sft_lora_offline.py \
+  --adapter-dir /path/to/adapter \
+  --base-model Qwen/Qwen3.5-0.8B \
+  --heldout-set both \
+  --num-examples 128 \
+  --allow-downloads
+```
+
+For a serious SFT gate, use both heldout sets and require zero parse/env errors,
+nonzero two-call completion, and improvement over the base model on
+`strict_two_call_correct_rate` and `solved_rate`.
 
 Do not continue long low-learning-rate PPO on the same distribution without
 heldout gates. Previous runs repeatedly showed online movement that did not
