@@ -266,6 +266,7 @@ uv run python scripts/export_oracle_trajectories.py \
   --seed 64 \
   --split train_candidate_relative_flow_rule_tail_solve_depth2 \
   --output /tmp/megaminx-oracle-v056-1024.jsonl
+uv run python scripts/summarize_oracle_trajectories.py /tmp/megaminx-oracle-v056-1024.jsonl
 ```
 
 Run the tracked tail-solve baseline and continuation configs when Prime billing

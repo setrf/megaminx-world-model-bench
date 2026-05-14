@@ -109,6 +109,7 @@ uv run python scripts/export_oracle_trajectories.py \
   --seed 64 \
   --split train_candidate_relative_flow_rule_tail_solve_depth2 \
   --output /tmp/megaminx-oracle-v056-1024.jsonl
+uv run python scripts/summarize_oracle_trajectories.py /tmp/megaminx-oracle-v056-1024.jsonl
 ```
 
 The current 1,024-row v0.2.56 oracle audit solves every row with exactly two

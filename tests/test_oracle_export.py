@@ -75,3 +75,28 @@ def test_export_oracle_trajectories_cli_writes_deterministic_jsonl(tmp_path: Pat
         assert record["metrics"]["final_reward"] == 1.0
         assert record["metrics"]["solved"] is True
         assert record["metrics"]["candidate_path_completed"] == 1.0
+
+
+def test_summarize_oracle_trajectories_cli_validates_export(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    summary_script = repo_root / "scripts" / "summarize_oracle_trajectories.py"
+    output = tmp_path / "oracle.jsonl"
+    records = _run_export(output)
+
+    result = subprocess.run(
+        [sys.executable, str(summary_script), str(output)],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    summary = json.loads(result.stdout)
+
+    assert summary["rows"] == len(records) == 2
+    assert summary["env_versions"] == {"0.2.56": 2}
+    assert summary["action_counts"] == {"2": 2}
+    assert summary["final_rewards"] == {"1.0": 2}
+    assert summary["solved"] == {"True": 2}
+    assert summary["prompt_leak_count"] == 0
+    assert set(summary["first_slot_counts"]).issubset({"1", "2", "3", "4"})
+    assert set(summary["second_slot_counts"]).issubset({"1", "2", "3", "4"})

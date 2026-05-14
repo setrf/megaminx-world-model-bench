@@ -614,8 +614,9 @@ Lifecycle status:
 | Tests | `uv run pytest -q` -> `105 passed`; no-cache audit rerun -> `105 passed in 12.87s` |
 | Exporter smoke | `uv run python scripts/export_oracle_trajectories.py --num-examples 4 ...` wrote solved v0.2.56 JSONL |
 | Exporter audit | `uv run python scripts/export_oracle_trajectories.py --num-examples 1024 --seed 64 ...` wrote `/tmp/megaminx-oracle-v056-1024.jsonl`; all `1024` rows had `env_version=0.2.56`, exactly two actions, reward `1.0`, solved `true`, and no `Example:`/row-id prompt leakage |
+| Exporter summary | `uv run python scripts/summarize_oracle_trajectories.py /tmp/megaminx-oracle-v056-1024.jsonl` validates the JSONL and reports rows, SHA256, slot/direction balance, rewards, solved counts, and prompt-leak count |
 | Exporter determinism | Re-running the 1,024-row export produced `cmp_exit=0`; SHA256 `0604bd14343aebb04f9b68ba77cb1dd34d1062f025d011d3961298393b3258e7`; size `8.1M` |
-| Focused tail-solve tests | `uv run pytest -q tests/test_megaminx_solver.py::test_candidate_relative_flow_rule_solve2_tail_reward_and_balanced_second_slots tests/test_megaminx_solver.py::test_action_gated_candidate_path_tail_solve_rewards_second_step_signal` -> `2 passed in 2.00s`; `uv run pytest tests/test_oracle_export.py -q` -> `1 passed in 4.80s` |
+| Focused tail-solve tests | `uv run pytest -q tests/test_megaminx_solver.py::test_candidate_relative_flow_rule_solve2_tail_reward_and_balanced_second_slots tests/test_megaminx_solver.py::test_action_gated_candidate_path_tail_solve_rewards_second_step_signal` -> `2 passed in 2.00s`; `uv run pytest tests/test_oracle_export.py -q` -> `2 passed in 6.95s` |
 
 The 1,024-row oracle audit is balanced enough for warm-start use. First action
 slots were `{1: 254, 2: 270, 3: 250, 4: 250}` and second action slots were
@@ -642,6 +643,7 @@ prime env install setrf/megaminx-solver@0.2.56 --plain
 uv run pytest -q
 uv run python scripts/export_oracle_trajectories.py --num-examples 128 --seed 64 --split train_candidate_relative_flow_rule_tail_solve_depth2 --output /tmp/megaminx-oracle.jsonl
 uv run python scripts/export_oracle_trajectories.py --num-examples 1024 --seed 64 --split train_candidate_relative_flow_rule_tail_solve_depth2 --output /tmp/megaminx-oracle-v056-1024.jsonl
+uv run python scripts/summarize_oracle_trajectories.py /tmp/megaminx-oracle-v056-1024.jsonl
 uv run python scripts/export_oracle_trajectories.py --num-examples 1024 --seed 64 --split train_candidate_relative_flow_rule_tail_solve_depth2 --output /tmp/megaminx-oracle-v056-1024-rerun.jsonl
 cmp -s /tmp/megaminx-oracle-v056-1024.jsonl /tmp/megaminx-oracle-v056-1024-rerun.jsonl; echo cmp_exit=$?
 shasum -a 256 /tmp/megaminx-oracle-v056-1024.jsonl
