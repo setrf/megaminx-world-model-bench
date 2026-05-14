@@ -294,3 +294,72 @@ def test_validate_sft_jsonl_rejects_noncanonical_tool_arguments(tmp_path: Path) 
 
     assert result.returncode != 0
     assert "has invalid tool arguments" in result.stderr
+
+
+def test_project_sft_to_openai_tools_writes_nested_function_calls(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    convert_script = repo_root / "scripts" / "convert_oracle_to_sft_jsonl.py"
+    project_script = repo_root / "scripts" / "project_sft_to_openai_tools.py"
+    oracle_output = tmp_path / "oracle.jsonl"
+    sft_output = tmp_path / "sft.jsonl"
+    projected_output = tmp_path / "sft-openai.jsonl"
+    _run_export(oracle_output)
+    subprocess.run(
+        [
+            sys.executable,
+            str(convert_script),
+            str(oracle_output),
+            "--output",
+            str(sft_output),
+        ],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(project_script),
+            str(sft_output),
+            "--output",
+            str(projected_output),
+        ],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "Wrote 2 OpenAI-style tool-call SFT records" in result.stdout
+
+    projected = [
+        json.loads(line)
+        for line in projected_output.read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(projected) == 2
+    for item in projected:
+        assert item["tools"][0]["type"] == "function"
+        assert item["tools"][0]["function"]["name"] == "select_candidate"
+        assistant_messages = [
+            message for message in item["messages"] if message["role"] == "assistant"
+        ]
+        tool_messages = [
+            message for message in item["messages"] if message["role"] == "tool"
+        ]
+        assert [message["tool_calls"][0]["type"] for message in assistant_messages] == [
+            "function",
+            "function",
+        ]
+        assert [
+            message["tool_calls"][0]["function"]["name"]
+            for message in assistant_messages
+        ] == ["select_candidate", "select_candidate"]
+        assert [message["tool_call_id"] for message in tool_messages] == [
+            "call_1",
+            "call_2",
+        ]
+        assert [message["name"] for message in tool_messages] == [
+            "select_candidate",
+            "select_candidate",
+        ]

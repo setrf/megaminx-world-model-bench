@@ -71,6 +71,10 @@ uv run python scripts/convert_oracle_to_sft_jsonl.py \
 uv run python scripts/validate_sft_jsonl.py \
   /tmp/megaminx-oracle-v056-1024-sft.jsonl
 
+uv run python scripts/project_sft_to_openai_tools.py \
+  /tmp/megaminx-oracle-v056-1024-sft.jsonl \
+  --output /tmp/megaminx-oracle-v056-1024-sft-openai.jsonl
+
 uv run python scripts/check_next_run_readiness.py
 ```
 
@@ -84,6 +88,12 @@ Expected SFT JSONL SHA256:
 
 ```text
 59b9db129517f3a6f86a868f06179826a032b2e0d07c4393d5a9ae168e8b1ec3
+```
+
+Expected OpenAI-style SFT projection SHA256:
+
+```text
+2ed51c37e74e32d7944bc7ef14d2bc0d059886698c88d4fbac1e17fbd2604627
 ```
 
 The summary must show:

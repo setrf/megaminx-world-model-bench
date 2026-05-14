@@ -28,7 +28,7 @@ puzzle simulator.
 | Latest Hub action | `kioezfzz4ji4uquyhm0grzwc` -> `SUCCESS` |
 | Hub visibility | Still reports `PRIVATE` after `--visibility PUBLIC`; API PATCH visibility attempts return HTTP 405 |
 | Latest wheel SHA256 | `f52a3858518f234c4a2df310ab465b37b536fc28ab3ad2e034373109f49e7106` |
-| Latest local tests | `uv run pytest -q` -> `116 passed in 31.33s` |
+| Latest local tests | `uv run pytest -q` -> `117 passed in 31.42s` |
 | Latest scaffold baseline | [`etecohz0kxjx0hwpj06aoevq`](https://app.primeintellect.ai/dashboard/training/etecohz0kxjx0hwpj06aoevq): reward `0.7336`, face `0.7034`, zero errors |
 | Stopped v0.2.46 train | [`hv6ljq5jlc8w391a0q38373l`](https://app.primeintellect.ai/dashboard/training/hv6ljq5jlc8w391a0q38373l): best step `0.7618`, final step `0.6580`, cost `$4.17` |
 | v0.2.47 frontier baseline | [`v6p7exy9p8h4vbek7ujvj86c`](https://app.primeintellect.ai/dashboard/training/v6p7exy9p8h4vbek7ujvj86c): reward `0.4620`, face `0.7817`, action-frontier `0.1878` |
@@ -114,6 +114,9 @@ uv run python scripts/convert_oracle_to_sft_jsonl.py \
   /tmp/megaminx-oracle-v056-1024.jsonl \
   --output /tmp/megaminx-oracle-v056-1024-sft.jsonl
 uv run python scripts/validate_sft_jsonl.py /tmp/megaminx-oracle-v056-1024-sft.jsonl
+uv run python scripts/project_sft_to_openai_tools.py \
+  /tmp/megaminx-oracle-v056-1024-sft.jsonl \
+  --output /tmp/megaminx-oracle-v056-1024-sft-openai.jsonl
 uv run python scripts/check_next_run_readiness.py
 ```
 
@@ -125,6 +128,8 @@ the current SHA256 is
 `1038afa6958030832c028840dafc22fc3724206461608e2ed809c90fa9695e7b`.
 The derived messages/tools SFT JSONL has SHA256
 `59b9db129517f3a6f86a868f06179826a032b2e0d07c4393d5a9ae168e8b1ec3`.
+The optional OpenAI-style function-tool projection has SHA256
+`2ed51c37e74e32d7944bc7ef14d2bc0d059886698c88d4fbac1e17fbd2604627`.
 Hosted follow-up runs are blocked until Prime billing is restored;
 `prime wallet --plain` reported a `$-0.80` balance on May 14, 2026.
 After auth and billing are refreshed, run
