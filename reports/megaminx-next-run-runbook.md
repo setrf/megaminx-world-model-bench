@@ -184,6 +184,11 @@ uv run python scripts/train_sft_lora.py \
   --config configs/sft/megaminx-v056-qwen08b-tail-solve-smoke.toml \
   --dry-run
 uv run python scripts/train_sft_lora.py \
+  --config configs/sft/megaminx-v056-qwen08b-tail-solve-smoke.toml \
+  --max-samples 2 \
+  --max-steps 1 \
+  --output-dir /tmp/megaminx-v056-qwen08b-sft-smoke-1step-2048
+uv run python scripts/train_sft_lora.py \
   --config configs/sft/megaminx-v056-qwen9b-tail-solve-lora.toml
 ```
 
@@ -191,9 +196,10 @@ The smoke config validates the data/format path through Qwen's native
 chat/tool-call template and reports dependency status. The trainer masks loss to
 assistant tool-call spans, enables gradient checkpointing, and treats
 `max_steps` as optimizer updates, so gradient accumulation does not silently
-shrink the intended run. A one-step local MPS smoke on 0.8B reached
-forward/backward but hit the Mac memory ceiling at 4096 tokens; run the full 9B
-config on a larger CUDA GPU box with `torch`, `transformers`, and `peft`.
+shrink the intended run. A one-step local MPS smoke on 0.8B completed at 2048
+tokens and saved `/tmp/megaminx-v056-qwen08b-sft-smoke-1step-2048`; 4096 tokens
+hit the Mac memory ceiling. Run the full 9B config on a larger CUDA GPU box
+with `torch`, `transformers`, and `peft`.
 
 Do not continue long low-learning-rate PPO on the same distribution without
 heldout gates. Previous runs repeatedly showed online movement that did not

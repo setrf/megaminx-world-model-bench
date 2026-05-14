@@ -63,7 +63,7 @@ def test_sft_lora_dry_run_validates_data_without_ml_dependencies(tmp_path: Path)
     assert payload["records"] == 2
     assert payload["max_optimizer_steps"] == 10
     assert payload["gradient_accumulation_steps"] == 4
-    assert payload["max_seq_length"] == 4096
+    assert payload["max_seq_length"] == 2048
     assert payload["output_dir"] == str(tmp_path / "adapter")
     assert isinstance(payload["missing_packages"], list)
 
