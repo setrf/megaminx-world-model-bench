@@ -17,15 +17,11 @@ SAFE_METADATA_KEYS = (
     "env_id",
     "env_version",
     "expected_env_version",
-    "example_id",
     "format",
     "move_budget",
     "prompt_style",
     "reward_style",
-    "row_index",
     "scramble_depth",
-    "seed",
-    "split",
 )
 
 
@@ -82,10 +78,17 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("input", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--expected-env-version", default=EXPECTED_ENV_VERSION)
-    parser.add_argument(
+    metadata_group = parser.add_mutually_exclusive_group()
+    metadata_group.add_argument(
+        "--metadata",
+        action="store_true",
+        default=True,
+        help="Include non-identifying env metadata. This is the default.",
+    )
+    metadata_group.add_argument(
         "--no-metadata",
         action="store_true",
-        help="Write only messages/tools, without safe metadata.",
+        help="Write only messages/tools, without metadata.",
     )
     return parser.parse_args(argv)
 

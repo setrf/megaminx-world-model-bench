@@ -38,6 +38,7 @@ DEFAULT_SPLIT = "train_candidate_relative_flow_rule_tail_solve_depth2"
 PROMPT_STYLE = "stage_candidate_relative_flow_rule_solve2_native_tool"
 REWARD_STYLE = "action_gated_candidate_path_tail_solve"
 TOOL_NAME = "select_candidate"
+TOOL_CALL_IDS = ("call_1", "call_2")
 
 
 def _disable_progress_bars() -> None:
@@ -172,7 +173,7 @@ async def _generate_record(
     initial_candidate_faces = _as_candidate_faces(row.get("candidate_faces"))
     first_action, first_tool_call = _oracle_action(
         turn=1,
-        call_id=f"oracle-{row_index}-1",
+        call_id=TOOL_CALL_IDS[0],
         candidate_faces=initial_candidate_faces,
         move=rollout.inverse_solution[0],
     )
@@ -192,7 +193,7 @@ async def _generate_record(
     second_candidate_faces = list(rollout.second_candidate_faces or rollout.candidate_faces)
     second_action, second_tool_call = _oracle_action(
         turn=2,
-        call_id=f"oracle-{row_index}-2",
+        call_id=TOOL_CALL_IDS[1],
         candidate_faces=second_candidate_faces,
         move=rollout.inverse_solution[1],
     )

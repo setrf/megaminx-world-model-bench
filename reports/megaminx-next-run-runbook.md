@@ -77,13 +77,13 @@ uv run python scripts/check_next_run_readiness.py
 Expected oracle JSONL SHA256:
 
 ```text
-0604bd14343aebb04f9b68ba77cb1dd34d1062f025d011d3961298393b3258e7
+1038afa6958030832c028840dafc22fc3724206461608e2ed809c90fa9695e7b
 ```
 
 Expected SFT JSONL SHA256:
 
 ```text
-99575888ced056df08a8950bf20c8fe31fbbfe0b2bbf1fcf30c12401165f44ed
+59b9db129517f3a6f86a868f06179826a032b2e0d07c4393d5a9ae168e8b1ec3
 ```
 
 The summary must show:
@@ -94,6 +94,8 @@ The summary must show:
 - `solved: {"True": 1024}`
 - `action_counts: {"2": 1024}`
 - `prompt_leak_count: 0`
+- stable turn-local tool-call ids (`call_1`, `call_2`) and no legacy
+  row-derived `oracle-*` ids
 
 The SFT validation summary must also show:
 
@@ -102,6 +104,9 @@ The SFT validation summary must also show:
 - `tool_names: {"select_candidate": 1024}`
 - `forbidden_payload_fields: 0`
 - `prompt_leak_count: 0`
+- metadata contains only non-identifying environment fields; it excludes row
+  ids, numeric example ids, seed, split, scramble, inverse solution, and action
+  traces
 
 ## 3. Run Matched v0.2.56 Heldout Probes
 

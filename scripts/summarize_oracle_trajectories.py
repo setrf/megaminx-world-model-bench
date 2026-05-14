@@ -13,10 +13,15 @@ EXPECTED_ENV_VERSION = "0.2.56"
 EXPECTED_FORMAT = "megaminx-oracle-select-candidate-jsonl/v1"
 EXPECTED_TOOL = "select_candidate"
 EXPECTED_ROLES = ("system", "user", "assistant", "tool", "assistant", "tool")
+EXPECTED_TOOL_CALL_IDS = ("call_1", "call_2")
 
 
 def _json_counter(counter: Counter[Any]) -> dict[str, int]:
     return {str(key): counter[key] for key in sorted(counter, key=lambda item: str(item))}
+
+
+def _json_dumps(payload: Any) -> str:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
 def _sha256(path: Path) -> str:
@@ -103,6 +108,60 @@ def _validate_record(record: dict[str, Any], *, expected_env_version: str) -> li
         roles = tuple(message.get("role") for message in messages if isinstance(message, dict))
         if roles != EXPECTED_ROLES:
             errors.append(prefix + f"unexpected message roles {roles!r}")
+        assistant_messages = [
+            message
+            for message in messages
+            if isinstance(message, dict) and message.get("role") == "assistant"
+        ]
+        tool_messages = [
+            message
+            for message in messages
+            if isinstance(message, dict) and message.get("role") == "tool"
+        ]
+        for turn, (message, expected_id) in enumerate(
+            zip(assistant_messages, EXPECTED_TOOL_CALL_IDS, strict=False),
+            start=1,
+        ):
+            if message.get("content", "") != "":
+                errors.append(prefix + f"assistant message {turn} must have empty content")
+            for field in ("reasoning", "reasoning_content", "thinking", "thinking_content"):
+                if field in message:
+                    errors.append(prefix + f"assistant message {turn} must not contain {field!r}")
+            tool_calls = message.get("tool_calls")
+            if not isinstance(tool_calls, list) or len(tool_calls) != 1:
+                errors.append(prefix + f"assistant message {turn} must have exactly one tool call")
+                continue
+            tool_call = tool_calls[0]
+            if not isinstance(tool_call, dict):
+                errors.append(prefix + f"assistant message {turn} tool call must be an object")
+                continue
+            if tool_call.get("id") != expected_id:
+                errors.append(
+                    prefix
+                    + f"assistant message {turn} tool_call id must be {expected_id!r}, got {tool_call.get('id')!r}"
+                )
+            if tool_call.get("name") != EXPECTED_TOOL:
+                errors.append(prefix + f"assistant message {turn} calls {tool_call.get('name')!r}")
+            actions = record.get("actions")
+            expected_args = None
+            if isinstance(actions, list) and turn <= len(actions) and isinstance(actions[turn - 1], dict):
+                expected_args = actions[turn - 1].get("arguments")
+            if not isinstance(expected_args, dict):
+                errors.append(prefix + f"missing action arguments for assistant message {turn}")
+            elif tool_call.get("arguments") != _json_dumps(expected_args):
+                errors.append(
+                    prefix
+                    + f"assistant message {turn} arguments must be exact compact JSON for oracle action"
+                )
+        for turn, (message, expected_id) in enumerate(
+            zip(tool_messages, EXPECTED_TOOL_CALL_IDS, strict=False),
+            start=1,
+        ):
+            if message.get("tool_call_id") != expected_id:
+                errors.append(
+                    prefix
+                    + f"tool message {turn} tool_call_id must be {expected_id!r}, got {message.get('tool_call_id')!r}"
+                )
         prompt = "\n".join(
             message.get("content", "")
             for message in messages
@@ -112,6 +171,11 @@ def _validate_record(record: dict[str, Any], *, expected_env_version: str) -> li
             errors.append(prefix + "prompt leaks old Example: marker")
         if isinstance(record.get("row_index"), int) and f"{record['row_index']:05d}" in prompt:
             errors.append(prefix + "prompt leaks zero-padded row id")
+        transcript = json.dumps(messages, sort_keys=True, separators=(",", ":"))
+        if isinstance(record.get("row_index"), int) and f"oracle-{record['row_index']}" in transcript:
+            errors.append(prefix + "transcript leaks row-derived oracle tool_call id")
+        if "oracle-" in transcript:
+            errors.append(prefix + "transcript contains legacy oracle-* tool_call id")
 
     return errors
 

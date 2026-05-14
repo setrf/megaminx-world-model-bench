@@ -238,9 +238,9 @@ v0.2.56 fixes a remaining visible-row-id shortcut in the refreshed second-slot
 selection, caps non-solving second-step partial reward below `0.50`, and adds
 `scripts/export_oracle_trajectories.py` for deterministic two-call oracle JSONL.
 The audited 1,024-row seed-64 export solves every row, uses exactly two native
-`select_candidate` actions, has balanced slots/directions, and reruns
-byte-identically with SHA256
-`0604bd14343aebb04f9b68ba77cb1dd34d1062f025d011d3961298393b3258e7`.
+`select_candidate` actions, has balanced slots/directions, uses stable
+turn-local tool-call ids, and reruns byte-identically with SHA256
+`1038afa6958030832c028840dafc22fc3724206461608e2ed809c90fa9695e7b`.
 
 ## Validation
 
@@ -256,7 +256,7 @@ Run local tests:
 uv run pytest -q
 ```
 
-Latest result: `113 passed in 23.99s`.
+Latest result: `116 passed in 31.33s`.
 
 Export the deterministic v0.2.56 oracle warm-start corpus:
 

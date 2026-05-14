@@ -28,7 +28,7 @@ puzzle simulator.
 | Latest Hub action | `kioezfzz4ji4uquyhm0grzwc` -> `SUCCESS` |
 | Hub visibility | Still reports `PRIVATE` after `--visibility PUBLIC`; API PATCH visibility attempts return HTTP 405 |
 | Latest wheel SHA256 | `f52a3858518f234c4a2df310ab465b37b536fc28ab3ad2e034373109f49e7106` |
-| Latest local tests | `uv run pytest -q` -> `113 passed in 23.99s` |
+| Latest local tests | `uv run pytest -q` -> `116 passed in 31.33s` |
 | Latest scaffold baseline | [`etecohz0kxjx0hwpj06aoevq`](https://app.primeintellect.ai/dashboard/training/etecohz0kxjx0hwpj06aoevq): reward `0.7336`, face `0.7034`, zero errors |
 | Stopped v0.2.46 train | [`hv6ljq5jlc8w391a0q38373l`](https://app.primeintellect.ai/dashboard/training/hv6ljq5jlc8w391a0q38373l): best step `0.7618`, final step `0.6580`, cost `$4.17` |
 | v0.2.47 frontier baseline | [`v6p7exy9p8h4vbek7ujvj86c`](https://app.primeintellect.ai/dashboard/training/v6p7exy9p8h4vbek7ujvj86c): reward `0.4620`, face `0.7817`, action-frontier `0.1878` |
@@ -118,12 +118,13 @@ uv run python scripts/check_next_run_readiness.py
 ```
 
 The current 1,024-row v0.2.56 oracle audit solves every row with exactly two
-native `select_candidate` actions, balanced slots/directions, and no visible
-row-id prompt leakage. Re-running the export is byte-identical (`cmp_exit=0`);
+native `select_candidate` actions, balanced slots/directions, stable turn-local
+tool-call ids, and no visible row-id prompt leakage. Re-running the export is
+byte-identical (`cmp_exit=0`);
 the current SHA256 is
-`0604bd14343aebb04f9b68ba77cb1dd34d1062f025d011d3961298393b3258e7`.
+`1038afa6958030832c028840dafc22fc3724206461608e2ed809c90fa9695e7b`.
 The derived messages/tools SFT JSONL has SHA256
-`99575888ced056df08a8950bf20c8fe31fbbfe0b2bbf1fcf30c12401165f44ed`.
+`59b9db129517f3a6f86a868f06179826a032b2e0d07c4393d5a9ae168e8b1ec3`.
 Hosted follow-up runs are blocked until Prime billing is restored;
 `prime wallet --plain` reported a `$-0.80` balance on May 14, 2026.
 After auth and billing are refreshed, run

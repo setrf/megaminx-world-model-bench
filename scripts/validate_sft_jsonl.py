@@ -11,6 +11,7 @@ from summarize_oracle_trajectories import (  # noqa: E402
     EXPECTED_ENV_VERSION,
     EXPECTED_ROLES,
     EXPECTED_TOOL,
+    EXPECTED_TOOL_CALL_IDS,
     _json_counter,
     _read_jsonl,
     _sha256,
@@ -37,8 +38,6 @@ FORBIDDEN_METADATA_KEYS = {
 
 def _tool_call_args(tool_call: dict[str, Any]) -> dict[str, Any] | None:
     raw_args = tool_call.get("arguments")
-    if isinstance(raw_args, dict):
-        return raw_args
     if isinstance(raw_args, str):
         try:
             parsed = json.loads(raw_args)
@@ -98,6 +97,11 @@ def _validate_sft_record(record: dict[str, Any], *, expected_env_version: str) -
         errors.append(prefix + f"expected two assistant tool-call messages, got {len(assistant_messages)}")
 
     for index, message in enumerate(assistant_messages, start=1):
+        if message.get("content", "") != "":
+            errors.append(prefix + f"assistant message {index} must have empty content")
+        for field in ("reasoning", "reasoning_content", "thinking", "thinking_content"):
+            if field in message:
+                errors.append(prefix + f"assistant message {index} must not contain {field!r}")
         tool_calls = message.get("tool_calls")
         if not isinstance(tool_calls, list) or len(tool_calls) != 1:
             errors.append(prefix + f"assistant message {index} must have exactly one tool call")
@@ -108,14 +112,47 @@ def _validate_sft_record(record: dict[str, Any], *, expected_env_version: str) -
             continue
         if tool_call.get("name") != EXPECTED_TOOL:
             errors.append(prefix + f"assistant message {index} calls {tool_call.get('name')!r}")
+        expected_tool_call_id = (
+            EXPECTED_TOOL_CALL_IDS[index - 1]
+            if index <= len(EXPECTED_TOOL_CALL_IDS)
+            else f"unexpected-{index}"
+        )
+        if tool_call.get("id") != expected_tool_call_id:
+            errors.append(
+                prefix
+                + f"assistant message {index} tool_call id must be {expected_tool_call_id!r}, got {tool_call.get('id')!r}"
+            )
         args = _tool_call_args(tool_call)
         if args is None:
             errors.append(prefix + f"assistant message {index} has invalid tool arguments")
             continue
+        expected_arg_string = json.dumps(args, sort_keys=True, separators=(",", ":"))
+        if tool_call.get("arguments") != expected_arg_string:
+            errors.append(
+                prefix
+                + f"assistant message {index} arguments must be compact sorted JSON string"
+            )
         if args.get("index") not in {1, 2, 3, 4}:
             errors.append(prefix + f"assistant message {index} has invalid index {args.get('index')!r}")
         if args.get("direction") not in {"cw", "ccw"}:
             errors.append(prefix + f"assistant message {index} has invalid direction {args.get('direction')!r}")
+
+    tool_messages = [
+        message
+        for message in messages
+        if isinstance(message, dict) and message.get("role") == "tool"
+    ]
+    for index, message in enumerate(tool_messages, start=1):
+        expected_tool_call_id = (
+            EXPECTED_TOOL_CALL_IDS[index - 1]
+            if index <= len(EXPECTED_TOOL_CALL_IDS)
+            else f"unexpected-{index}"
+        )
+        if message.get("tool_call_id") != expected_tool_call_id:
+            errors.append(
+                prefix
+                + f"tool message {index} tool_call_id must be {expected_tool_call_id!r}, got {message.get('tool_call_id')!r}"
+            )
 
     prompt = "\n".join(
         message.get("content", "")
@@ -127,6 +164,11 @@ def _validate_sft_record(record: dict[str, Any], *, expected_env_version: str) -
     if isinstance(metadata, dict) and isinstance(metadata.get("row_index"), int):
         if f"{metadata['row_index']:05d}" in prompt:
             errors.append(prefix + "prompt leaks zero-padded row id")
+        transcript = json.dumps(messages, sort_keys=True, separators=(",", ":"))
+        if f"oracle-{metadata['row_index']}" in transcript:
+            errors.append(prefix + "transcript leaks row-derived oracle tool_call id")
+        if "oracle-" in transcript:
+            errors.append(prefix + "transcript contains legacy oracle-* tool_call id")
 
     return errors
 
