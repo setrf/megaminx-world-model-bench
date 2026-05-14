@@ -124,6 +124,8 @@ The derived messages/tools SFT JSONL has SHA256
 `99575888ced056df08a8950bf20c8fe31fbbfe0b2bbf1fcf30c12401165f44ed`.
 Hosted follow-up runs are blocked until Prime billing is restored;
 `prime wallet --plain` reported a `$-0.80` balance on May 14, 2026.
+The exact auth/billing recovery and next hosted probe sequence is in
+[`reports/megaminx-next-run-runbook.md`](reports/megaminx-next-run-runbook.md).
 
 Reproduce the tracked tail-solve baseline/training lane:
 
@@ -190,3 +192,4 @@ set this boundary.
 - Hosted RL configs: `configs/rl/`
 - Eval configs: `configs/eval/`
 - Final report: `reports/megaminx-rl-report.md`
+- Next run runbook: `reports/megaminx-next-run-runbook.md`
