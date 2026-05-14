@@ -33,17 +33,27 @@ checkpoint-tail-room rerun produced a heldout win: checkpoint
 rate from `0.5625` to `0.6048`. A second heldout seed was also positive but
 much smaller: reward `0.6707` to `0.6712`, solved `0.5723` to `0.5801`.
 
+v0.2.55 is the current hardening release. It fixes a v0.2.54 audit finding
+where the refreshed second target candidate was always in slot 4, adds a
+second-step slot-balance test, and introduces
+`action_gated_candidate_path_tail_solve`, a stricter reward that makes a
+first-exact partial path worth only `0.25` until the second action is completed.
+The Hub action and local tests pass. A Qwen 9B continuation from
+`lbujflb1zyzv764lh9dhzu3s` produced a READY step-2 checkpoint
+`o68kzy5up4e65ve6lktmkuat`, but canonical heldout checkpoint probes could not
+be launched because Prime returned `Payment required` during run creation.
+
 | Item | Value |
 | --- | --- |
 | GitHub repo | `setrf/megaminx-world-model-bench` |
-| Working branch | `codex/megaminx-rl-crack-v2` |
+| Working branch | `main` |
 | Prime owner | `setrf` |
 | Hub environment | [`setrf/megaminx-solver`](https://app.primeintellect.ai/dashboard/environments/setrf/megaminx-solver) |
 | Environment id | `ozde27sytxjkc3wm83zv4e2c` |
-| Latest pushed version | `0.2.54` |
-| Latest wheel SHA256 | `9a1edd7195f08a516596efd772ef8729149b1332d7bc885e090eb52613289748` |
+| Latest pushed version | `0.2.55` |
+| Latest wheel SHA256 | `bb335bd1a0d7863a99bfec5b9bd217fbaf3b5c5bea088d4264f86892ce19eca1` |
 | Latest install check | `prime env install megaminx-solver --plain` and Hub push succeeded |
-| Latest local tests | `uv run pytest -q` -> `102 passed in 7.65s` |
+| Latest local tests | `uv run pytest -q` -> `104 passed in 8.27s` |
 | Visibility | CLI/API still report `PRIVATE` after public pushes |
 
 Prime framing used:
@@ -224,7 +234,7 @@ uv run pytest -q
 Result:
 
 ```text
-102 passed in 7.65s
+104 passed in 8.27s
 ```
 
 Coverage includes:
@@ -242,14 +252,15 @@ Coverage includes:
 - renderer-friendly one-shot candidate tool handling
 - native/text/private tool accounting
 - no direct answer leakage in staged prompts
-- package metadata matching the pushed v0.2.54 environment
+- package metadata matching the pushed v0.2.55 environment
 - v0.2.54 two-call candidate-path refresh and scripted depth-2 solve
+- v0.2.55 second-step candidate slot balance and tail-solve reward behavior
 
 Latest package lifecycle commands:
 
 ```bash
 prime env push megaminx-solver --path ./environments --owner setrf --visibility PUBLIC --plain
-prime env install setrf/megaminx-solver@0.2.54 --plain
+prime env install setrf/megaminx-solver@0.2.55 --plain
 prime env status setrf/megaminx-solver --plain
 ```
 
@@ -257,8 +268,8 @@ Observed pushed package:
 
 | Field | Value |
 | --- | --- |
-| Version | `0.2.54` |
-| Wheel SHA256 | `9a1edd7195f08a516596efd772ef8729149b1332d7bc885e090eb52613289748` |
+| Version | `0.2.55` |
+| Wheel SHA256 | `bb335bd1a0d7863a99bfec5b9bd217fbaf3b5c5bea088d4264f86892ce19eca1` |
 
 Visibility blocker: public pushes succeed, but the existing Hub record still
 reports `PRIVATE`. The owner should flip environment id
@@ -466,12 +477,99 @@ reached step-1 reward `0.6818` and solved `0.5813` before any weight update,
 then was stopped while waiting on the first checkpoint. It is not counted as
 trained-checkpoint evidence.
 
+### v0.2.55 Tail-Solve Hardening
+
+A subagent audit found a real v0.2.54 flaw: after the first oracle
+`select_candidate` call, the refreshed second target candidate was always in
+slot 4 across inspected examples. That made second-step behavior easier to
+shortcut than intended. v0.2.55 fixes this by balancing the required second
+target slot across slots 1 through 4, recording second-candidate metrics, and
+adding a regression test that executes the first oracle move across 96 depth-2
+examples and asserts balanced second slots.
+
+v0.2.55 also adds:
+
+- `reward_style="action_gated_candidate_path_tail_solve"`
+- metric id `23.0`
+- `candidate_path_completed`
+- `second_candidate_index`
+- `second_target_candidate_index`
+- `second_candidate_face_correct`
+- `second_candidate_relative_flow_count`
+- `second_candidate_relative_flow_margin`
+- `second_candidate_relative_flow_is_candidate_max`
+
+Reward semantics:
+
+| State | Reward intent |
+| --- | --- |
+| Solved by clean candidate path | `1.0` |
+| First exact action only, second action still missing | `0.25` |
+| First exact plus wrong non-solving second action on target face | partial, capped below solve |
+| Non-prefix one-turn frontier | `0.30` |
+| First candidate face only | small face/direction credit |
+| No clean action path | `0.0` |
+
+Lifecycle status:
+
+| Field | Value |
+| --- | --- |
+| Commit | `c6948c7` |
+| Tag | [`v0.2.55`](https://github.com/setrf/megaminx-world-model-bench/releases/tag/v0.2.55) |
+| Hub package | `setrf/megaminx-solver@0.2.55` |
+| Hub action | `i6tvosit0fc5n41iq0qm3tm6`, `SUCCESS` |
+| Wheel SHA256 | `bb335bd1a0d7863a99bfec5b9bd217fbaf3b5c5bea088d4264f86892ce19eca1` |
+| Tests | `uv run pytest -q` -> `104 passed in 8.27s` |
+| Visibility | Still reports `PRIVATE` despite `--visibility PUBLIC` |
+
+Baseline native checks under the stricter tail-solve reward:
+
+| Probe | Seed | Reward | Solved | First exact | Second exact | Second target slot avg | Native tools | Errors | Cost |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| [`q98zu1mmnl4z80uxo10jnt24`](https://app.primeintellect.ai/dashboard/training/q98zu1mmnl4z80uxo10jnt24) | 146 | `0.5833` | `0.5373` | `0.3700` | `0.4214` | `2.4839` | `2.0` | `0` | `$1.31` |
+| [`rotjrhjd3g2189sf58qd2e5b`](https://app.primeintellect.ai/dashboard/training/rotjrhjd3g2189sf58qd2e5b) | 246 | `0.6309` | `0.5684` | `0.4629` | `0.4746` | `2.5313` | `2.0` | `0` | `$1.29` |
+
+The two-seed v0.2.55 base average is reward `0.6071` and solved `0.5528`.
+Those scores are lower than v0.2.54 because the new reward deliberately removes
+the generous first-step tail credit; they are not a regression in simulator
+correctness.
+
+Continuation run:
+
+| Field | Value |
+| --- | --- |
+| Run | [`gnpet9lrxx16amnytkcb8vju`](https://app.primeintellect.ai/dashboard/training/gnpet9lrxx16amnytkcb8vju) |
+| Warm start | v0.2.54 checkpoint `lbujflb1zyzv764lh9dhzu3s` |
+| Model | `Qwen/Qwen3.5-9B` |
+| Batch/RPE/LR | `1024` / `16` / `1e-9` |
+| Step 2 | reward `0.6259`, solved `0.5674`, first exact `0.4434`, second exact `0.4805`, zero errors |
+| Step 2 checkpoint | `o68kzy5up4e65ve6lktmkuat`, `READY`, 445.5 MB |
+| Step 3 | reward `0.5340`, solved `0.4763`; treated as degraded and not used |
+| Cost | `$5.50` |
+
+Canonical heldout probes for `o68kzy5up4e65ve6lktmkuat` were prepared in:
+
+```bash
+configs/rl/megaminx-v055-qwen9b-tail-solve-depth2-ckpt2-heldout-rpe16.toml
+configs/rl/megaminx-v055-qwen9b-tail-solve-depth2-ckpt2-heldout2-rpe16.toml
+```
+
+Both launch attempts failed before run creation:
+
+```text
+Error: Failed to create RL run: Payment required. Please check your billing
+status at https://app.primeintellect.ai/dashboard/billing
+```
+
+Therefore v0.2.55 is counted as an environment hardening and diagnostic release,
+not as new heldout checkpoint evidence.
+
 ## Reproducibility Commands
 
 Install and test:
 
 ```bash
-prime env install setrf/megaminx-solver@0.2.54 --plain
+prime env install setrf/megaminx-solver@0.2.55 --plain
 uv run pytest -q
 ```
 
@@ -523,40 +621,42 @@ Concrete success criteria from the active goal and finish plan:
 
 | Requirement | Evidence | Status |
 | --- | --- | --- |
-| Prime Lab/Verifiers environment exposes `load_environment(...)` | `megaminx_solver.py` exports `load_environment`, tests import it repeatedly, and `prime env install setrf/megaminx-solver@0.2.54 --plain` succeeds | Passed |
+| Prime Lab/Verifiers environment exposes `load_environment(...)` | `megaminx_solver.py` exports `load_environment`, tests import it repeatedly, and `prime env install setrf/megaminx-solver@0.2.55 --plain` succeeds | Passed |
 | Stateful Megaminx tool environment | `MegaminxEnv(vf.StatefulToolEnv)` with persistent rollout state, `rotate`, `inspect`, `finish`, and candidate tools | Passed |
 | v0.2.54 two-turn depth-2 task | `stage_candidate_relative_flow_rule_solve2_native_tool` refreshes candidate table after the first `select_candidate`; scripted depth-2 solve test passes | Passed |
+| v0.2.55 second-slot hardening | Refreshed second target candidate slots are balanced; `action_gated_candidate_path_tail_solve` caps first-only paths at `0.25` and rewards completed second actions | Passed |
 | Hidden answer not leaked in prompts | Prompt tests assert no direct answer leakage; scramble/inverse stay in metadata | Passed |
-| Unit/environment tests cover simulator and RL reward behavior | `uv run pytest -q` -> `102 passed in 7.65s` | Passed |
-| Hub package pushed and installable | `prime env status setrf/megaminx-solver --plain` reports latest version `0.2.54`, action `SUCCESS`; install command succeeds | Passed |
+| Unit/environment tests cover simulator and RL reward behavior | `uv run pytest -q` -> `104 passed in 8.27s` | Passed |
+| Hub package pushed and installable | `prime env status setrf/megaminx-solver --plain` reports latest version `0.2.55`, action `SUCCESS`; install command succeeds | Passed |
 | Hub environment public | CLI still reports visibility `PRIVATE` after public pushes; direct API PATCH attempts against the env id and slug return HTTP 405 | Blocked |
 | Hosted RL run completed | `bg0vbir6u6d521qcr8kghvvv` completed with final online reward `0.7335`, solved `0.6615`, zero tool/protocol/env errors | Passed |
-| Probeable trained checkpoint exists | `lbujflb1zyzv764lh9dhzu3s` from `junxsn2n4rz3uvkcl88ru2in` is READY and was probed | Passed |
+| Probeable trained checkpoint exists | `lbujflb1zyzv764lh9dhzu3s` from `junxsn2n4rz3uvkcl88ru2in` was probed on v0.2.54; v0.2.55 produced READY checkpoint `o68kzy5up4e65ve6lktmkuat` but billing blocked heldout probes | Passed, then blocked |
 | Heldout checkpoint improves base | Seed 146: reward `0.6335` -> `0.6631`, solved `0.5625` -> `0.6048`; seed 246: reward `0.6707` -> `0.6712`, solved `0.5723` -> `0.5801` | Passed, modest |
 | Original `+30pp` solved target | Best v0.2.54 two-seed average solved gain is about `+2.50pp` | Failed |
 | Final report with commands, costs, limitations | This report includes design, rewards, runs, heldout table, costs, reproduction commands, and limitations | Passed |
 | CI with `uv run pytest` on PRs | `.github/workflows/ci.yml` runs `uv run pytest` on `pull_request` | Passed |
 | License | `LICENSE` is MIT; root and env `pyproject.toml` declare MIT | Passed |
-| PR/merge/tag | PR [`#3`](https://github.com/setrf/megaminx-world-model-bench/pull/3) was merged to `main`; tag [`v0.2.54`](https://github.com/setrf/megaminx-world-model-bench/releases/tag/v0.2.54) is pushed | Passed |
+| PR/merge/tag | PR [`#3`](https://github.com/setrf/megaminx-world-model-bench/pull/3) was merged to `main`; tags [`v0.2.54`](https://github.com/setrf/megaminx-world-model-bench/releases/tag/v0.2.54) and [`v0.2.55`](https://github.com/setrf/megaminx-world-model-bench/releases/tag/v0.2.55) are pushed | Passed |
 
 Audit conclusion: the technical RL objective is partially achieved with a real
 but modest positive checkpoint on a harder two-turn depth-2 task. The original
 aggressive `+30pp` acceptance target and public Hub visibility are not achieved.
 The repository release steps are complete: CI passed, PR `#3` is merged to
-`main`, and release tag `v0.2.54` is pushed.
+`main`, and release tag `v0.2.55` is pushed.
 
 ## Acceptance Status
 
 | Criterion | Status |
 | --- | --- |
 | Public Hub env works | Partially blocked: owner-auth works, visibility still reports `PRIVATE` |
-| Latest Hub package installs | Passed at `0.2.54` |
-| Local tests pass | Passed: `102 passed in 7.65s` |
+| Latest Hub package installs | Passed at `0.2.55` |
+| Local tests pass | Passed: `104 passed in 8.27s` |
 | Env errors in native probes | Passed: zero errors |
-| Native tool calls nonzero | Passed: depth-1 probes use `1.0`; v0.2.54 depth-2 probes use `2.0` |
+| Native tool calls nonzero | Passed: depth-1 probes use `1.0`; v0.2.54/v0.2.55 depth-2 probes use `2.0` |
 | Trained checkpoint improves depth-1 solved by `+30pp` | Failed: best native gain is about `+2.52pp` |
 | v0.2.54 depth-2 checkpoint improves heldout reward | Passed: tail-room checkpoint reward `0.6631` vs base `0.6335` |
 | v0.2.54 depth-2 checkpoint improves heldout solved | Passed: tail-room checkpoint solved `0.6048` vs base `0.5625` |
+| v0.2.55 checkpoint improves heldout reward | Blocked: checkpoint `o68kzy5up4e65ve6lktmkuat` is READY, but heldout probe launches failed with `Payment required` |
 | Easy reward improves over base | Not completed after depth-1 failed large-gain gate |
 | Commands/results reproducible | Passed for package, train config, and native probe shape |
 
@@ -570,7 +670,9 @@ then cracked the two-turn depth-2 environment shape: online reward reached
 reward from `0.6335` to `0.6631` and solved rate from `0.5625` to `0.6048`.
 The original `+30pp` goal and public Hub visibility remain unmet, but the
 current finish state is a real positive RL result on a harder two-turn
-environment plus a merged, tagged, reproducible report.
+environment plus a merged, tagged, reproducible report. v0.2.55 further fixes a
+second-slot shortcut and leaves a READY checkpoint queued for heldout probing
+once Prime billing allows new runs.
 
 ## Costs
 
@@ -588,6 +690,10 @@ environment plus a merged, tagged, reproducible report.
 | v0.2.54 heldout2 base `lj8g10rkj4haatuhq1iqxqzn` | `$1.59` |
 | v0.2.54 heldout2 ckpt2 `jiwkc1h58uwyeiyc8z7pnka9` | `$1.32` |
 | v0.2.54 lower-LR batch-1024 run `vm2servi2dsv54ynuo2kxebl` | `$5.82`; stopped after step 1 because checkpoint wait blocked post-update evidence |
+| v0.2.55 base heldout seed 146 `q98zu1mmnl4z80uxo10jnt24` | `$1.31` |
+| v0.2.55 base heldout seed 246 `rotjrhjd3g2189sf58qd2e5b` | `$1.29` |
+| v0.2.55 continuation `gnpet9lrxx16amnytkcb8vju` | `$5.50`; stopped with step-2 checkpoint READY and step-3 degradation |
+| v0.2.55 checkpoint heldout probe attempts | `$0.00`; run creation failed with `Payment required` before IDs were allocated |
 
 ## Limitations And Next Experiments
 
@@ -611,18 +717,16 @@ environment plus a merged, tagged, reproducible report.
 
 Recommended next experiment:
 
-1. Keep v0.2.53 as the current clean package baseline.
-2. Probe checkpoint `lle93v210pcgw6kawfr2mr3e` from run
-   `hg24yiykjdrvounjsg6bd6si` once Prime marks it `READY`; it was still
-   `UPLOADING` at the latest poll.
-3. Probe v0.2.53 checkpoint `pxum4a0nnvfuq5jssm28qgwa` from
-   `ycx5aoe58lko3gvqyyto7794` if it becomes `READY`, but do not treat it as a
-   likely breakthrough; the online curve was flat to negative.
-4. If neither checkpoint becomes cloud-visible, treat the completed short run
-   as an online-only positive signal and switch away from more low-LR PPO on the
-   same distribution: generate supervised warm-start data from the printed
-   relative-flow rule, filter/oversample unique depth-2 rows, or resolve hosted
-   startup for the larger/model-family-flip configs before another long run.
+1. Keep v0.2.55 as the current package baseline because it fixes the second-slot
+   shortcut and leaves the tail-solve reward in place.
+2. As soon as Prime billing allows new hosted runs, probe checkpoint
+   `o68kzy5up4e65ve6lktmkuat` with the two prepared v0.2.55 heldout configs.
+3. If the v0.2.55 checkpoint is positive on both seeds, continue from that
+   checkpoint with lower LR and checkpoint every step; if it regresses, treat
+   v0.2.54's `lbujflb1zyzv764lh9dhzu3s` as the best trained checkpoint and move
+   to an oracle/SFT warm start before more PPO.
+4. Avoid more long low-LR PPO on the same distribution without heldout gates:
+   prior online gains repeatedly failed to generalize cleanly.
 
 ## May 13 Candidate-Curriculum Addendum
 
@@ -634,9 +738,9 @@ Latest package:
 
 | Field | Value |
 | --- | --- |
-| Hub package | `setrf/megaminx-solver@0.2.54` |
-| Wheel SHA256 | `9a1edd7195f08a516596efd772ef8729149b1332d7bc885e090eb52613289748` |
-| Local tests | `uv run pytest -q` -> `102 passed in 7.65s` |
+| Hub package | `setrf/megaminx-solver@0.2.55` |
+| Wheel SHA256 | `bb335bd1a0d7863a99bfec5b9bd217fbaf3b5c5bea088d4264f86892ce19eca1` |
+| Local tests | `uv run pytest -q` -> `104 passed in 8.27s` |
 
 Key attempts:
 
@@ -709,7 +813,7 @@ claim.
 Reproduction commands:
 
 ```bash
-prime env install setrf/megaminx-solver@0.2.54 --plain
+prime env install setrf/megaminx-solver@0.2.55 --plain
 uv run pytest -q
 prime train configs/rl/megaminx-v049-native-candidate-geometry-frontier-depth12-base-qwen9b-rpe2-fast.toml --yes --plain
 prime train configs/rl/megaminx-v049-qwen9b-candidate-geometry-frontier-depth12-rpe16-noeval.toml --yes --plain
@@ -728,6 +832,11 @@ prime train configs/rl/megaminx-v054-qwen9b-rule-flow-solve2-depth2-rpe16-comple
 prime train configs/rl/megaminx-v054-qwen9b-rule-flow-solve2-depth2-heldout-base-rpe16.toml --yes --plain
 prime train configs/rl/megaminx-v054-qwen9b-rule-flow-solve2-depth2-rpe16-tailroom8.toml --yes --plain
 prime train configs/rl/megaminx-v054-qwen9b-rule-flow-solve2-depth2-tailroom-ckpt2-heldout-rpe16.toml --yes --plain
+prime train configs/rl/megaminx-v055-qwen9b-tail-solve-depth2-base-heldout-rpe16.toml --yes --plain
+prime train configs/rl/megaminx-v055-qwen9b-tail-solve-depth2-base-heldout2-rpe16.toml --yes --plain
+prime train configs/rl/megaminx-v055-qwen9b-tail-solve-depth2-lbuj-continue-b1024-lr1e9-rpe16.toml --yes --plain
+prime train configs/rl/megaminx-v055-qwen9b-tail-solve-depth2-ckpt2-heldout-rpe16.toml --yes --plain
+prime train configs/rl/megaminx-v055-qwen9b-tail-solve-depth2-ckpt2-heldout2-rpe16.toml --yes --plain
 prime train configs/rl/megaminx-v044-native-candidate-scorecard-depth12-base-qwen9b-rpe2-fast.toml --yes --plain
 prime train configs/rl/megaminx-v045-native-candidate-scorecard-no-frontier-depth12-base-qwen9b-rpe2-fast.toml --yes --plain
 prime train configs/rl/megaminx-v046-native-candidate-scorecard-mask-depth12-base-qwen9b-rpe2-fast.toml --yes --plain

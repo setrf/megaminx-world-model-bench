@@ -1,0 +1,47 @@
+name = "megaminx-v055-qwen9b-tail-solve-depth2-ckpt2-heldout2-rpe16"
+model = "Qwen/Qwen3.5-9B"
+checkpoint_id = "o68kzy5up4e65ve6lktmkuat"
+max_steps = 3
+batch_size = 512
+rollouts_per_example = 16
+learning_rate = 1e-12
+lora_alpha = 16
+oversampling_factor = 1.0
+max_async_level = 1
+
+[sampling]
+max_tokens = 64
+temperature = 0.8
+enable_thinking = false
+
+[sampling.extra_body]
+tool_choice = { type = "function", function = { name = "select_candidate" } }
+parallel_tool_calls = false
+
+[buffer]
+skip_verification = true
+seed = 257
+
+[[env]]
+id = "setrf/megaminx-solver"
+version = "0.2.55"
+
+[env.args]
+split = "heldout2_candidate_relative_flow_rule_tail_solve_depth2"
+min_depth = 2
+max_depth = 2
+num_examples = 1024
+seed = 246
+max_turns = 4
+move_budget = 2
+reward_style = "action_gated_candidate_path_tail_solve"
+prompt_style = "stage_candidate_relative_flow_rule_solve2_native_tool"
+allow_text_tool_actions = false
+
+[checkpoints]
+interval = 1000
+keep_cloud = 1
+
+[adapters]
+interval = 1000
+keep_last = 1
