@@ -256,7 +256,7 @@ Run local tests:
 uv run pytest -q
 ```
 
-Latest result: `109 passed in 19.77s`.
+Latest result: `113 passed in 23.99s`.
 
 Export the deterministic v0.2.56 oracle warm-start corpus:
 
@@ -271,6 +271,7 @@ uv run python scripts/convert_oracle_to_sft_jsonl.py \
   /tmp/megaminx-oracle-v056-1024.jsonl \
   --output /tmp/megaminx-oracle-v056-1024-sft.jsonl
 uv run python scripts/validate_sft_jsonl.py /tmp/megaminx-oracle-v056-1024-sft.jsonl
+uv run python scripts/check_next_run_readiness.py
 ```
 
 Run the tracked tail-solve baseline and continuation configs when Prime billing

@@ -4,9 +4,9 @@ This runbook is the handoff for the remaining hosted work after v0.2.56.
 It assumes the repo is `setrf/megaminx-world-model-bench`, the Prime owner is
 `setrf`, and the environment slug is `setrf/megaminx-solver`.
 
-Current local state as of 2026-05-14 06:57 Istanbul:
+Current local state as of 2026-05-14 07:09 Istanbul:
 
-- `main` is pushed through `e2009da`.
+- `main` contains v0.2.56 plus the next-run readiness-tool follow-up.
 - `setrf/megaminx-solver@0.2.56` was pushed and its Hub action
   `kioezfzz4ji4uquyhm0grzwc` reached `SUCCESS`.
 - Prime CLI auth currently fails with `API key unauthorized`.
@@ -37,11 +37,23 @@ Proceed only when:
 If visibility still reports `PRIVATE`, keep running owner-authenticated probes.
 Do not block checkpoint validation on public visibility.
 
+The combined readiness command is:
+
+```bash
+uv run python scripts/check_next_run_readiness.py --check-prime
+```
+
+It validates the four tracked v0.2.56 matched probe configs, the canonical
+oracle/SFT artifacts if present under `/tmp`, and redacted Prime auth/wallet/env
+status. It should report `ready_for_hosted_prime_runs: true` before launching
+the hosted probes below.
+
 ## 2. Validate Local Package And Oracle Data
 
 ```bash
 prime env install setrf/megaminx-solver@0.2.56 --plain
 uv run pytest -q
+uv run python scripts/check_next_run_readiness.py --skip-oracle --skip-sft
 
 uv run python scripts/export_oracle_trajectories.py \
   --num-examples 1024 \
@@ -58,6 +70,8 @@ uv run python scripts/convert_oracle_to_sft_jsonl.py \
 
 uv run python scripts/validate_sft_jsonl.py \
   /tmp/megaminx-oracle-v056-1024-sft.jsonl
+
+uv run python scripts/check_next_run_readiness.py
 ```
 
 Expected oracle JSONL SHA256:

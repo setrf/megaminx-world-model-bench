@@ -59,7 +59,7 @@ deterministic oracle JSONL exporter for the next SFT/warm-start lane.
 | Latest pushed version | `0.2.56` |
 | Latest wheel SHA256 | `f52a3858518f234c4a2df310ab465b37b536fc28ab3ad2e034373109f49e7106` |
 | Latest install check | `prime env install megaminx-solver --plain` and Hub push succeeded |
-| Latest local tests | `uv run pytest -q` -> `109 passed in 19.77s` |
+| Latest local tests | `uv run pytest -q` -> `113 passed in 23.99s` |
 | Latest oracle export audit | `1024/1024` v0.2.56 oracle trajectories solved; no prompt-id leakage |
 | Live wallet status | `prime wallet --plain` on 2026-05-14 06:41 Istanbul reported balance `$-0.80` |
 | Visibility | CLI/API still report `PRIVATE` after public pushes |
@@ -242,7 +242,7 @@ uv run pytest -q
 Result:
 
 ```text
-109 passed in 19.77s
+113 passed in 23.99s
 ```.
 
 Coverage includes:
@@ -264,6 +264,8 @@ Coverage includes:
 - v0.2.54 two-call candidate-path refresh and scripted depth-2 solve
 - v0.2.55 second-step candidate slot balance and tail-solve reward behavior
 - v0.2.56 visible-id shortcut regression and oracle export behavior
+- next-run readiness checks for the v0.2.56 matched configs, oracle JSONL, and
+  SFT JSONL
 
 Latest package lifecycle commands:
 
@@ -609,14 +611,15 @@ Lifecycle status:
 | Hub hash | `8a1d0168b96c` |
 | Hub action | `kioezfzz4ji4uquyhm0grzwc`, `SUCCESS` |
 | Wheel SHA256 | `f52a3858518f234c4a2df310ab465b37b536fc28ab3ad2e034373109f49e7106` |
-| Tests | `uv run pytest -q` -> `109 passed in 19.77s` |
+| Tests | `uv run pytest -q` -> `113 passed in 23.99s` |
 | Exporter smoke | `uv run python scripts/export_oracle_trajectories.py --num-examples 4 ...` wrote solved v0.2.56 JSONL |
 | Exporter audit | `uv run python scripts/export_oracle_trajectories.py --num-examples 1024 --seed 64 ...` wrote `/tmp/megaminx-oracle-v056-1024.jsonl`; all `1024` rows had `env_version=0.2.56`, exactly two actions, reward `1.0`, solved `true`, and no `Example:`/row-id prompt leakage |
 | Exporter summary | `uv run python scripts/summarize_oracle_trajectories.py /tmp/megaminx-oracle-v056-1024.jsonl` validates the JSONL and reports rows, SHA256, slot/direction balance, rewards, solved counts, and prompt-leak count |
 | SFT conversion | `uv run python scripts/convert_oracle_to_sft_jsonl.py /tmp/megaminx-oracle-v056-1024.jsonl --output /tmp/megaminx-oracle-v056-1024-sft.jsonl` writes `1024` messages/tools records without scramble, inverse solution, or action metadata; SHA256 `99575888ced056df08a8950bf20c8fe31fbbfe0b2bbf1fcf30c12401165f44ed`; size `7.2M` |
 | SFT validation | `uv run python scripts/validate_sft_jsonl.py /tmp/megaminx-oracle-v056-1024-sft.jsonl` reports `1024` rows, `select_candidate` tools, no forbidden payload fields, no prompt leakage, and the same SFT SHA256 |
+| Next-run readiness | `uv run python scripts/check_next_run_readiness.py` passes the four matched v0.2.56 probe configs, canonical oracle JSONL, and canonical SFT JSONL; Prime access/wallet is skipped unless `--check-prime` is used |
 | Exporter determinism | Re-running the 1,024-row export produced `cmp_exit=0`; SHA256 `0604bd14343aebb04f9b68ba77cb1dd34d1062f025d011d3961298393b3258e7`; size `8.1M` |
-| Focused tail-solve tests | `uv run pytest -q tests/test_megaminx_solver.py::test_candidate_relative_flow_rule_solve2_tail_reward_and_balanced_second_slots tests/test_megaminx_solver.py::test_action_gated_candidate_path_tail_solve_rewards_second_step_signal` -> `2 passed in 2.00s`; `uv run pytest tests/test_oracle_export.py -q` -> `3 passed in 8.93s` |
+| Focused tail-solve tests | `uv run pytest -q tests/test_megaminx_solver.py::test_candidate_relative_flow_rule_solve2_tail_reward_and_balanced_second_slots tests/test_megaminx_solver.py::test_action_gated_candidate_path_tail_solve_rewards_second_step_signal` -> `2 passed in 2.00s`; oracle/SFT/readiness CLI regressions are included in the full `111 passed` suite |
 | Probe config guard | `tests/test_rl_configs.py` asserts the four v0.2.56 base/checkpoint heldout configs stay matched on env version, seeds, prompt, reward, and checkpoint id |
 
 The 1,024-row oracle audit is balanced enough for warm-start use. First action
@@ -647,6 +650,7 @@ uv run python scripts/export_oracle_trajectories.py --num-examples 1024 --seed 6
 uv run python scripts/summarize_oracle_trajectories.py /tmp/megaminx-oracle-v056-1024.jsonl
 uv run python scripts/convert_oracle_to_sft_jsonl.py /tmp/megaminx-oracle-v056-1024.jsonl --output /tmp/megaminx-oracle-v056-1024-sft.jsonl
 uv run python scripts/validate_sft_jsonl.py /tmp/megaminx-oracle-v056-1024-sft.jsonl
+uv run python scripts/check_next_run_readiness.py
 uv run python scripts/export_oracle_trajectories.py --num-examples 1024 --seed 64 --split train_candidate_relative_flow_rule_tail_solve_depth2 --output /tmp/megaminx-oracle-v056-1024-rerun.jsonl
 cmp -s /tmp/megaminx-oracle-v056-1024.jsonl /tmp/megaminx-oracle-v056-1024-rerun.jsonl; echo cmp_exit=$?
 shasum -a 256 /tmp/megaminx-oracle-v056-1024.jsonl
@@ -707,12 +711,12 @@ Concrete success criteria from the active goal and finish plan:
 | Hidden answer not leaked in prompts | Prompt tests assert no direct answer leakage; scramble/inverse stay in metadata | Passed |
 | v0.2.56 visible-id shortcut fix | Prompt hides numeric row ids; refreshed second slots are derived from hidden metadata; visible-id second-slot shortcut test passes | Passed |
 | Oracle warm-start export | `scripts/export_oracle_trajectories.py` exports solved v0.2.56 two-call JSONL and has a deterministic CLI regression test | Passed |
-| Unit/environment tests cover simulator and RL reward behavior | `uv run pytest -q` -> `109 passed in 19.77s` | Passed |
+| Unit/environment tests cover simulator and RL reward behavior | `uv run pytest -q` -> `113 passed in 23.99s` | Passed |
 | Hub package pushed and installable | `prime env status setrf/megaminx-solver --plain` reports latest version `0.2.56`; install command succeeds | Passed |
 | Hub environment public | CLI still reports visibility `PRIVATE` after public pushes; direct API PATCH attempts against the env id and slug return HTTP 405 | Blocked |
 | Hosted RL run completed | `bg0vbir6u6d521qcr8kghvvv` completed with final online reward `0.7335`, solved `0.6615`, zero tool/protocol/env errors | Passed |
 | Probeable trained checkpoint exists | `lbujflb1zyzv764lh9dhzu3s` from `junxsn2n4rz3uvkcl88ru2in` was probed on v0.2.54; v0.2.55 produced READY checkpoint `o68kzy5up4e65ve6lktmkuat` but billing blocked heldout probes | Passed, then blocked |
-| v0.2.56 matched probe configs | Four tracked configs cover base and checkpoint `o68kzy5up4e65ve6lktmkuat` on heldout seeds 146 and 246 against env version `0.2.56`; TOML parse validation passed | Ready, blocked by billing |
+| v0.2.56 matched probe configs | Four tracked configs cover base and checkpoint `o68kzy5up4e65ve6lktmkuat` on heldout seeds 146 and 246 against env version `0.2.56`; readiness validation passed together with canonical oracle/SFT artifacts | Ready, blocked by billing |
 | Heldout checkpoint improves base | Seed 146: reward `0.6335` -> `0.6631`, solved `0.5625` -> `0.6048`; seed 246: reward `0.6707` -> `0.6712`, solved `0.5723` -> `0.5801` | Passed, modest |
 | Original `+30pp` solved target | Best v0.2.54 two-seed average solved gain is about `+2.50pp` | Failed |
 | Final report with commands, costs, limitations | This report includes design, rewards, runs, heldout table, costs, reproduction commands, and limitations | Passed |
@@ -732,7 +736,7 @@ The repository release steps are complete: CI passed, PR `#3` is merged to
 | --- | --- |
 | Public Hub env works | Partially blocked: owner-auth works, visibility still reports `PRIVATE` |
 | Latest Hub package installs | Passed at `0.2.56` |
-| Local tests pass | Passed: `109 passed in 19.77s` |
+| Local tests pass | Passed: `113 passed in 23.99s` |
 | Env errors in native probes | Passed: zero errors |
 | Native tool calls nonzero | Passed: depth-1 probes use `1.0`; v0.2.54/v0.2.55 depth-2 probes use `2.0` |
 | Trained checkpoint improves depth-1 solved by `+30pp` | Failed: best native gain is about `+2.52pp` |
@@ -828,7 +832,7 @@ Latest package:
 | --- | --- |
 | Hub package | `setrf/megaminx-solver@0.2.56` |
 | Wheel SHA256 | `f52a3858518f234c4a2df310ab465b37b536fc28ab3ad2e034373109f49e7106` |
-| Local tests | `uv run pytest -q` -> `109 passed in 19.77s` |
+| Local tests | `uv run pytest -q` -> `113 passed in 23.99s` |
 
 Key attempts:
 
