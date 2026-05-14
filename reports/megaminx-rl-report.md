@@ -529,7 +529,7 @@ Concrete success criteria from the active goal and finish plan:
 | Hidden answer not leaked in prompts | Prompt tests assert no direct answer leakage; scramble/inverse stay in metadata | Passed |
 | Unit/environment tests cover simulator and RL reward behavior | `uv run pytest -q` -> `102 passed in 7.65s` | Passed |
 | Hub package pushed and installable | `prime env status setrf/megaminx-solver --plain` reports latest version `0.2.54`, action `SUCCESS`; install command succeeds | Passed |
-| Hub environment public | CLI still reports visibility `PRIVATE` after public pushes; no separate CLI visibility update exists | Blocked |
+| Hub environment public | CLI still reports visibility `PRIVATE` after public pushes; direct API PATCH attempts against the env id and slug return HTTP 405 | Blocked |
 | Hosted RL run completed | `bg0vbir6u6d521qcr8kghvvv` completed with final online reward `0.7335`, solved `0.6615`, zero tool/protocol/env errors | Passed |
 | Probeable trained checkpoint exists | `lbujflb1zyzv764lh9dhzu3s` from `junxsn2n4rz3uvkcl88ru2in` is READY and was probed | Passed |
 | Heldout checkpoint improves base | Seed 146: reward `0.6335` -> `0.6631`, solved `0.5625` -> `0.6048`; seed 246: reward `0.6707` -> `0.6712`, solved `0.5723` -> `0.5801` | Passed, modest |
@@ -537,14 +537,13 @@ Concrete success criteria from the active goal and finish plan:
 | Final report with commands, costs, limitations | This report includes design, rewards, runs, heldout table, costs, reproduction commands, and limitations | Passed |
 | CI with `uv run pytest` on PRs | `.github/workflows/ci.yml` runs `uv run pytest` on `pull_request` | Passed |
 | License | `LICENSE` is MIT; root and env `pyproject.toml` declare MIT | Passed |
-| PR/merge/tag | PR [`#3`](https://github.com/setrf/megaminx-world-model-bench/pull/3) is open from `codex/megaminx-rl-crack-v2`; merge/tag remain pending until CI/review | Partial |
+| PR/merge/tag | PR [`#3`](https://github.com/setrf/megaminx-world-model-bench/pull/3) was merged to `main`; tag [`v0.2.54`](https://github.com/setrf/megaminx-world-model-bench/releases/tag/v0.2.54) is pushed | Passed |
 
 Audit conclusion: the technical RL objective is partially achieved with a real
 but modest positive checkpoint on a harder two-turn depth-2 task. The original
 aggressive `+30pp` acceptance target and public Hub visibility are not achieved.
-The repository release steps are partially complete: changes are committed and
-pushed, and PR `#3` is open. Merge and release tag remain pending until CI and
-review are complete.
+The repository release steps are complete: CI passed, PR `#3` is merged to
+`main`, and release tag `v0.2.54` is pushed.
 
 ## Acceptance Status
 
@@ -561,16 +560,17 @@ review are complete.
 | Easy reward improves over base | Not completed after depth-1 failed large-gain gate |
 | Commands/results reproducible | Passed for package, train config, and native probe shape |
 
-Finished state so far: environment released and hardened, native-tool RL
-measurement working, scaffolded positive native result documented, clean
+Finished state so far: environment package released and hardened, native-tool RL
+measurement working, modest positive native result documented, clean
 v0.2.50 checkpoint probe negative, v0.2.51 conservative training stopped,
 v0.2.52 strict relative-flow training stayed below its baseline, and v0.2.53
 rule-flow established the strongest clean Qwen 9B one-shot baseline. v0.2.54
 then cracked the two-turn depth-2 environment shape: online reward reached
 `0.7335` and solved `0.6615`, and a READY tail-room checkpoint improved heldout
 reward from `0.6335` to `0.6631` and solved rate from `0.5625` to `0.6048`.
-The original `+30pp` goal remains unmet, but the current finish state is a real
-positive RL result on a harder two-turn environment plus a reproducible report.
+The original `+30pp` goal and public Hub visibility remain unmet, but the
+current finish state is a real positive RL result on a harder two-turn
+environment plus a merged, tagged, reproducible report.
 
 ## Costs
 

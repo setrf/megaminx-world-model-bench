@@ -4,6 +4,7 @@
 [![Latest env](https://img.shields.io/badge/env-v0.2.54-0f766e)](https://app.primeintellect.ai/dashboard/environments/setrf/megaminx-solver)
 [![Clean geometry](https://img.shields.io/badge/clean%20geometry-v0.2.50-16a34a)](https://app.primeintellect.ai/dashboard/training/dbup76z9d460x4fbcfxw8yql)
 [![GitHub branch](https://img.shields.io/badge/branch-codex%2Fmegaminx--rl--crack--v2-black)](https://github.com/setrf/megaminx-world-model-bench/tree/codex/megaminx-rl-crack-v2)
+[![Release tag](https://img.shields.io/badge/release-v0.2.54-0f766e)](https://github.com/setrf/megaminx-world-model-bench/releases/tag/v0.2.54)
 [![License](https://img.shields.io/badge/License-MIT-0f766e)](LICENSE)
 
 Prime Lab workspace for `setrf/megaminx-solver`, a trainable Prime/Verifiers
@@ -17,11 +18,14 @@ puzzle simulator.
 | Item | Value |
 | --- | --- |
 | GitHub repo | `setrf/megaminx-world-model-bench` |
-| Working branch | `codex/megaminx-rl-crack-v2` |
+| Default branch | `main` |
+| Merged PR | [`#3`](https://github.com/setrf/megaminx-world-model-bench/pull/3) from `codex/megaminx-rl-crack-v2` |
+| Release tag | [`v0.2.54`](https://github.com/setrf/megaminx-world-model-bench/releases/tag/v0.2.54) |
 | Prime owner | `setrf` |
 | Hub environment | [`setrf/megaminx-solver`](https://app.primeintellect.ai/dashboard/environments/setrf/megaminx-solver) |
 | Environment id | `ozde27sytxjkc3wm83zv4e2c` |
 | Latest package | `setrf/megaminx-solver@0.2.54` |
+| Hub visibility | Still reports `PRIVATE` after `--visibility PUBLIC`; API PATCH visibility attempts return HTTP 405 |
 | Latest wheel SHA256 | `9a1edd7195f08a516596efd772ef8729149b1332d7bc885e090eb52613289748` |
 | Latest local tests | `uv run pytest -q` -> `102 passed in 7.65s` |
 | Latest scaffold baseline | [`etecohz0kxjx0hwpj06aoevq`](https://app.primeintellect.ai/dashboard/training/etecohz0kxjx0hwpj06aoevq): reward `0.7336`, face `0.7034`, zero errors |
