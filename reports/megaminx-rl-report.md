@@ -625,7 +625,13 @@ slots were `{1: 254, 2: 270, 3: 250, 4: 250}` and second action slots were
 v0.2.56 supersedes v0.2.55 for future training. The already completed v0.2.55
 base and continuation runs remain useful diagnostics, but their checkpoint
 should be re-probed or retrained against v0.2.56 once billing allows hosted run
-creation again.
+creation again. The matched v0.2.56 base and checkpoint probe configs are
+tracked in:
+
+- `configs/rl/megaminx-v056-qwen9b-tail-solve-depth2-base-heldout-rpe16.toml`
+- `configs/rl/megaminx-v056-qwen9b-tail-solve-depth2-base-heldout2-rpe16.toml`
+- `configs/rl/megaminx-v056-qwen9b-tail-solve-depth2-ckpt2-heldout-rpe16.toml`
+- `configs/rl/megaminx-v056-qwen9b-tail-solve-depth2-ckpt2-heldout2-rpe16.toml`
 
 ## Reproducibility Commands
 
@@ -799,6 +805,8 @@ Recommended next experiment:
    before more PPO.
 4. As soon as Prime billing allows new hosted runs, re-run matched v0.2.56 base
    and checkpoint probes before continuing from `o68kzy5up4e65ve6lktmkuat`.
+   The four tracked v0.2.56 probe configs use seeds 146 and 246 for both the
+   base model and checkpoint `o68kzy5up4e65ve6lktmkuat`.
 5. Avoid more long low-LR PPO on the same distribution without heldout gates:
    prior online gains repeatedly failed to generalize cleanly.
 
@@ -917,6 +925,10 @@ prime train configs/rl/megaminx-v055-qwen9b-tail-solve-depth2-base-heldout2-rpe1
 prime train configs/rl/megaminx-v055-qwen9b-tail-solve-depth2-lbuj-continue-b1024-lr1e9-rpe16.toml --yes --plain
 prime train configs/rl/megaminx-v055-qwen9b-tail-solve-depth2-ckpt2-heldout-rpe16.toml --yes --plain
 prime train configs/rl/megaminx-v055-qwen9b-tail-solve-depth2-ckpt2-heldout2-rpe16.toml --yes --plain
+prime train configs/rl/megaminx-v056-qwen9b-tail-solve-depth2-base-heldout-rpe16.toml --yes --plain
+prime train configs/rl/megaminx-v056-qwen9b-tail-solve-depth2-base-heldout2-rpe16.toml --yes --plain
+prime train configs/rl/megaminx-v056-qwen9b-tail-solve-depth2-ckpt2-heldout-rpe16.toml --yes --plain
+prime train configs/rl/megaminx-v056-qwen9b-tail-solve-depth2-ckpt2-heldout2-rpe16.toml --yes --plain
 prime train configs/rl/megaminx-v044-native-candidate-scorecard-depth12-base-qwen9b-rpe2-fast.toml --yes --plain
 prime train configs/rl/megaminx-v045-native-candidate-scorecard-no-frontier-depth12-base-qwen9b-rpe2-fast.toml --yes --plain
 prime train configs/rl/megaminx-v046-native-candidate-scorecard-mask-depth12-base-qwen9b-rpe2-fast.toml --yes --plain

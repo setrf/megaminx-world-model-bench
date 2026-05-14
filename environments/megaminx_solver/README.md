@@ -276,6 +276,10 @@ prime train configs/rl/megaminx-v054-qwen9b-rule-flow-solve2-depth2-rpe16-comple
 prime train configs/rl/megaminx-v055-qwen9b-tail-solve-depth2-base-heldout-rpe16.toml --yes --plain
 prime train configs/rl/megaminx-v055-qwen9b-tail-solve-depth2-base-heldout2-rpe16.toml --yes --plain
 prime train configs/rl/megaminx-v055-qwen9b-tail-solve-depth2-lbuj-continue-b1024-lr1e9-rpe16.toml --yes --plain
+prime train configs/rl/megaminx-v056-qwen9b-tail-solve-depth2-base-heldout-rpe16.toml --yes --plain
+prime train configs/rl/megaminx-v056-qwen9b-tail-solve-depth2-base-heldout2-rpe16.toml --yes --plain
+prime train configs/rl/megaminx-v056-qwen9b-tail-solve-depth2-ckpt2-heldout-rpe16.toml --yes --plain
+prime train configs/rl/megaminx-v056-qwen9b-tail-solve-depth2-ckpt2-heldout2-rpe16.toml --yes --plain
 ```
 
 ## Current Evidence
