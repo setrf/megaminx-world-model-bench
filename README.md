@@ -28,7 +28,7 @@ puzzle simulator.
 | Latest Hub action | `kioezfzz4ji4uquyhm0grzwc` -> `SUCCESS` |
 | Hub visibility | Still reports `PRIVATE` after `--visibility PUBLIC`; API PATCH visibility attempts return HTTP 405 |
 | Latest wheel SHA256 | `f52a3858518f234c4a2df310ab465b37b536fc28ab3ad2e034373109f49e7106` |
-| Latest local tests | `uv run pytest -q` -> `127 passed in 44.53s` |
+| Latest local tests | `uv run pytest -q` -> `129 passed in 34.88s` |
 | Latest scaffold baseline | [`etecohz0kxjx0hwpj06aoevq`](https://app.primeintellect.ai/dashboard/training/etecohz0kxjx0hwpj06aoevq): reward `0.7336`, face `0.7034`, zero errors |
 | Stopped v0.2.46 train | [`hv6ljq5jlc8w391a0q38373l`](https://app.primeintellect.ai/dashboard/training/hv6ljq5jlc8w391a0q38373l): best step `0.7618`, final step `0.6580`, cost `$4.17` |
 | v0.2.47 frontier baseline | [`v6p7exy9p8h4vbek7ujvj86c`](https://app.primeintellect.ai/dashboard/training/v6p7exy9p8h4vbek7ujvj86c): reward `0.4620`, face `0.7817`, action-frontier `0.1878` |
@@ -153,6 +153,12 @@ Use `scripts/eval_sft_lora_offline.py` to test a saved local adapter on the
 matched v0.2.56 heldout prompts without Prime credentials; its oracle mode
 checks the evaluator contract and reports `strict_two_call_correct_rate=1.0`
 on the smoke rows.
+A slightly larger local MPS smoke trained `Qwen/Qwen3.5-0.8B` for 5 optimizer
+steps on 16 oracle rows and saved
+`/tmp/megaminx-v056-qwen08b-sft-local-16s-5step-2048`. On matched 16-row
+heldout probes, base 0.8B solved `0/16` on both seeds, while the adapter solved
+`10/16` on seed 146 and `8/16` on seed 246 with zero environment errors. This is
+a local SFT warm-start result, not a hosted Prime RL checkpoint.
 Hosted follow-up runs are blocked until Prime billing is restored;
 `prime wallet --plain` reported a `$-0.80` balance on May 14, 2026.
 After auth and billing are refreshed, run

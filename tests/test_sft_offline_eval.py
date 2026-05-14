@@ -30,9 +30,38 @@ def test_parse_qwen_tool_call_accepts_native_candidate_call() -> None:
     assert parsed.arguments == {"direction": "ccw", "index": 4}
 
 
+def test_parse_qwen_tool_call_truncates_after_turn_close() -> None:
+    parsed = eval_sft_lora_offline.parse_qwen_tool_call(
+        "<tool_call>\n"
+        "<function=select_candidate>\n"
+        "<parameter=direction>\ncw\n</parameter>\n"
+        "<parameter=index>\n3\n</parameter>\n"
+        "</function>\n"
+        "</tool_call><|im_end|>\n"
+        "<|im_start|>user\njunk"
+    )
+
+    assert parsed.arguments == {"direction": "cw", "index": 3}
+
+
+def test_parse_qwen_tool_call_accepts_empty_think_prefix() -> None:
+    parsed = eval_sft_lora_offline.parse_qwen_tool_call(
+        "<think>\n\n</think>\n\n"
+        "<tool_call>\n"
+        "<function=select_candidate>\n"
+        "<parameter=direction>\nccw\n</parameter>\n"
+        "<parameter=index>\n2\n</parameter>\n"
+        "</function>\n"
+        "</tool_call><|im_end|>"
+    )
+
+    assert parsed.arguments == {"direction": "ccw", "index": 2}
+
+
 def test_parse_qwen_tool_call_rejects_unsafe_shapes() -> None:
     bad_completions = [
         "I will solve it.\n<tool_call></tool_call>",
+        "<think>I should explain.</think><tool_call></tool_call>",
         "<tool_call></tool_call><tool_call></tool_call>",
         "<tool_call><function=rotate></function></tool_call>",
         "<tool_call><function=select_candidate><parameter=index>5</parameter><parameter=direction>cw</parameter></function></tool_call>",

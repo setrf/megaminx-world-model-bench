@@ -111,8 +111,16 @@ def _tool_message(message: Any) -> dict[str, str]:
 
 def parse_qwen_tool_call(completion: str) -> ParsedToolCall:
     text = completion.strip()
-    if text.endswith("<|im_end|>"):
-        text = text[: -len("<|im_end|>")].strip()
+    turn_close = text.find("<|im_end|>")
+    if turn_close >= 0:
+        text = text[:turn_close].strip()
+    if text.startswith("<think>"):
+        think_end = text.find("</think>")
+        if think_end >= 0:
+            thinking = text[len("<think>") : think_end].strip()
+            if thinking:
+                raise ValueError("non-empty thinking content before <tool_call>")
+            text = text[think_end + len("</think>") :].strip()
     if "<tool_call>" not in text:
         raise ValueError("missing <tool_call> block")
     if not text.startswith("<tool_call>"):

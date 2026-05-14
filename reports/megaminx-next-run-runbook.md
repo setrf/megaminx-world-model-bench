@@ -213,6 +213,21 @@ heldout eval completed but reported `parse_ok_rate=0.0`, `solved_rate=0.0`,
 and `strict_two_call_correct_rate=0.0`. Treat it as an end-to-end wiring check,
 not a model-quality result.
 
+The first nontrivial local smoke did learn: training `Qwen/Qwen3.5-0.8B` for 5
+optimizer steps on 16 oracle rows produced
+`/tmp/megaminx-v056-qwen08b-sft-local-16s-5step-2048`. Matched 16-row heldout
+evals showed:
+
+| Split | Base solved | Adapter solved | Base strict | Adapter strict | Adapter reward |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| seed 146 heldout | `0/16` | `10/16` | `0.0000` | `0.5000` | `0.7100` |
+| seed 246 heldout2 | `0/16` | `8/16` | `0.0000` | `0.4375` | `0.5788` |
+
+Both adapter evals had `parse_ok_rate=1.0`, `two_select_candidate_rate=1.0`,
+and `env_clean_rate=1.0`. This is the strongest current local crack and should
+be scaled to a 9B CUDA SFT warm start, then re-probed with the same offline
+heldout harness before launching hosted PPO.
+
 After any adapter train, evaluate it locally before more PPO:
 
 ```bash
