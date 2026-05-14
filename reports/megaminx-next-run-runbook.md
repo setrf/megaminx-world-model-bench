@@ -177,6 +177,21 @@ Recommended warm-start gate before more PPO:
 - require exactly two native `select_candidate` actions per rollout
 - require the SFT adapter to beat the base model before launching more PPO
 
+Local scaffold commands:
+
+```bash
+uv run python scripts/train_sft_lora.py \
+  --config configs/sft/megaminx-v056-qwen08b-tail-solve-smoke.toml \
+  --dry-run
+uv run python scripts/train_sft_lora.py \
+  --config configs/sft/megaminx-v056-qwen9b-tail-solve-lora.toml
+```
+
+The smoke config validates the data/format path and reports missing local ML
+packages without importing them. The full 9B config expects a GPU machine with
+`torch`, `transformers`, and `peft`; its `max_steps` value means optimizer
+updates, so gradient accumulation does not silently shrink the intended run.
+
 Do not continue long low-learning-rate PPO on the same distribution without
 heldout gates. Previous runs repeatedly showed online movement that did not
 cleanly generalize.
