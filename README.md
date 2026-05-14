@@ -25,9 +25,10 @@ puzzle simulator.
 | Hub environment | [`setrf/megaminx-solver`](https://app.primeintellect.ai/dashboard/environments/setrf/megaminx-solver) |
 | Environment id | `ozde27sytxjkc3wm83zv4e2c` |
 | Latest package | `setrf/megaminx-solver@0.2.56` |
+| Latest Hub action | `kioezfzz4ji4uquyhm0grzwc` -> `SUCCESS` |
 | Hub visibility | Still reports `PRIVATE` after `--visibility PUBLIC`; API PATCH visibility attempts return HTTP 405 |
 | Latest wheel SHA256 | `f52a3858518f234c4a2df310ab465b37b536fc28ab3ad2e034373109f49e7106` |
-| Latest local tests | `uv run pytest -q` -> `105 passed in 11.95s` |
+| Latest local tests | `uv run pytest -q` -> `105 passed`; no-cache audit rerun -> `105 passed in 12.87s` |
 | Latest scaffold baseline | [`etecohz0kxjx0hwpj06aoevq`](https://app.primeintellect.ai/dashboard/training/etecohz0kxjx0hwpj06aoevq): reward `0.7336`, face `0.7034`, zero errors |
 | Stopped v0.2.46 train | [`hv6ljq5jlc8w391a0q38373l`](https://app.primeintellect.ai/dashboard/training/hv6ljq5jlc8w391a0q38373l): best step `0.7618`, final step `0.6580`, cost `$4.17` |
 | v0.2.47 frontier baseline | [`v6p7exy9p8h4vbek7ujvj86c`](https://app.primeintellect.ai/dashboard/training/v6p7exy9p8h4vbek7ujvj86c): reward `0.4620`, face `0.7817`, action-frontier `0.1878` |
@@ -104,31 +105,32 @@ Export oracle trajectories for a future SFT/warm-start lane:
 
 ```bash
 uv run python scripts/export_oracle_trajectories.py \
-  --num-examples 128 \
+  --num-examples 1024 \
   --seed 64 \
   --split train_candidate_relative_flow_rule_tail_solve_depth2 \
-  --output /tmp/megaminx-oracle.jsonl
+  --output /tmp/megaminx-oracle-v056-1024.jsonl
 ```
 
-Reproduce the current clean rule-flow baseline and training lane:
+The current 1,024-row v0.2.56 oracle audit solves every row with exactly two
+native `select_candidate` actions, balanced slots/directions, and no visible
+row-id prompt leakage. Re-running the export is byte-identical (`cmp_exit=0`);
+the current SHA256 is
+`0604bd14343aebb04f9b68ba77cb1dd34d1062f025d011d3961298393b3258e7`.
+Hosted follow-up runs are blocked until Prime billing is restored;
+`prime wallet --plain` reported a `$-0.80` balance on May 14, 2026.
+
+Reproduce the tracked tail-solve baseline/training lane:
 
 ```bash
-prime train configs/rl/megaminx-v049-native-candidate-geometry-frontier-depth12-base-qwen9b-rpe2-fast.toml --yes --plain
-prime train configs/rl/megaminx-v049-qwen9b-candidate-geometry-frontier-depth12-rpe16-noeval.toml --yes --plain
-prime train configs/rl/megaminx-v051-native-candidate-geometry-frontier-depth12-base-qwen9b-rpe2-fast.toml --yes --plain
-prime train configs/rl/megaminx-v051-qwen9b-candidate-geometry-frontier-depth12-lr1e8-b1024-rpe16-temp07.toml --yes --plain
-prime train configs/rl/megaminx-v052-native-candidate-relative-flow-strict-frontier-depth12-base-qwen9b-rpe2-fast.toml --yes --plain
-prime train configs/rl/megaminx-v052-qwen9b-candidate-relative-flow-strict-frontier-depth12-lr1e8-b1024-rpe16-temp07.toml --yes --plain
-prime train configs/rl/megaminx-v053-native-candidate-relative-flow-rule-strict-frontier-depth12-base-qwen9b-rpe2-fast.toml --yes --plain
-prime train configs/rl/megaminx-v053-qwen9b-candidate-relative-flow-rule-strict-frontier-depth12-lr5e9-b1024-rpe16-noeval.toml --yes --plain
-prime train configs/rl/megaminx-v053-qwen9b-candidate-relative-flow-rule-strict-frontier-depth12-lr5e9-b1024-rpe16-complete2.toml --yes --plain
-prime train configs/rl/megaminx-v053-qwen36-35b-rule-flow-depth2-only-rpe16-complete2.toml --yes --plain
-prime train configs/rl/megaminx-v053-gptoss120b-rule-flow-depth2-only-rpe16-complete2.toml --yes --plain
 prime train configs/rl/megaminx-v054-qwen9b-rule-flow-solve2-depth2-rpe16-complete6.toml --yes --plain
 prime train configs/rl/megaminx-v055-qwen9b-tail-solve-depth2-base-heldout-rpe16.toml --yes --plain
 prime train configs/rl/megaminx-v055-qwen9b-tail-solve-depth2-base-heldout2-rpe16.toml --yes --plain
 prime train configs/rl/megaminx-v055-qwen9b-tail-solve-depth2-lbuj-continue-b1024-lr1e9-rpe16.toml --yes --plain
 ```
+
+The report also records older v0.2.49-v0.2.53 local run history. Some of those
+historical TOMLs are intentionally left as local artifacts rather than tracked
+release reproduction files.
 
 ## Environment Shape
 

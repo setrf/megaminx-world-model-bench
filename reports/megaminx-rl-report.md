@@ -59,7 +59,9 @@ deterministic oracle JSONL exporter for the next SFT/warm-start lane.
 | Latest pushed version | `0.2.56` |
 | Latest wheel SHA256 | `f52a3858518f234c4a2df310ab465b37b536fc28ab3ad2e034373109f49e7106` |
 | Latest install check | `prime env install megaminx-solver --plain` and Hub push succeeded |
-| Latest local tests | `uv run pytest -q` -> `105 passed in 11.95s` |
+| Latest local tests | `uv run pytest -q` -> `105 passed`; no-cache audit rerun -> `105 passed in 12.87s` |
+| Latest oracle export audit | `1024/1024` v0.2.56 oracle trajectories solved; no prompt-id leakage |
+| Live wallet status | `prime wallet --plain` on 2026-05-14 06:41 Istanbul reported balance `$-0.80` |
 | Visibility | CLI/API still report `PRIVATE` after public pushes |
 
 Prime framing used:
@@ -240,8 +242,10 @@ uv run pytest -q
 Result:
 
 ```text
-105 passed in 11.95s
+105 passed
 ```
+
+An audit rerun with bytecode/cache disabled reported `105 passed in 12.87s`.
 
 Coverage includes:
 
@@ -605,10 +609,18 @@ Lifecycle status:
 | --- | --- |
 | Hub package | `setrf/megaminx-solver@0.2.56` |
 | Hub hash | `8a1d0168b96c` |
-| Hub action | `kioezfzz4ji4uquyhm0grzwc` |
+| Hub action | `kioezfzz4ji4uquyhm0grzwc`, `SUCCESS` |
 | Wheel SHA256 | `f52a3858518f234c4a2df310ab465b37b536fc28ab3ad2e034373109f49e7106` |
-| Tests | `uv run pytest -q` -> `105 passed in 11.95s` |
+| Tests | `uv run pytest -q` -> `105 passed`; no-cache audit rerun -> `105 passed in 12.87s` |
 | Exporter smoke | `uv run python scripts/export_oracle_trajectories.py --num-examples 4 ...` wrote solved v0.2.56 JSONL |
+| Exporter audit | `uv run python scripts/export_oracle_trajectories.py --num-examples 1024 --seed 64 ...` wrote `/tmp/megaminx-oracle-v056-1024.jsonl`; all `1024` rows had `env_version=0.2.56`, exactly two actions, reward `1.0`, solved `true`, and no `Example:`/row-id prompt leakage |
+| Exporter determinism | Re-running the 1,024-row export produced `cmp_exit=0`; SHA256 `0604bd14343aebb04f9b68ba77cb1dd34d1062f025d011d3961298393b3258e7`; size `8.1M` |
+| Focused tail-solve tests | `uv run pytest -q tests/test_megaminx_solver.py::test_candidate_relative_flow_rule_solve2_tail_reward_and_balanced_second_slots tests/test_megaminx_solver.py::test_action_gated_candidate_path_tail_solve_rewards_second_step_signal` -> `2 passed in 2.00s`; `uv run pytest tests/test_oracle_export.py -q` -> `1 passed in 4.80s` |
+
+The 1,024-row oracle audit is balanced enough for warm-start use. First action
+slots were `{1: 254, 2: 270, 3: 250, 4: 250}` and second action slots were
+`{1: 246, 2: 279, 3: 256, 4: 243}`. Directions were also balanced: first action
+`{ccw: 510, cw: 514}` and second action `{ccw: 502, cw: 522}`.
 
 v0.2.56 supersedes v0.2.55 for future training. The already completed v0.2.55
 base and continuation runs remain useful diagnostics, but their checkpoint
@@ -623,6 +635,10 @@ Install and test:
 prime env install setrf/megaminx-solver@0.2.56 --plain
 uv run pytest -q
 uv run python scripts/export_oracle_trajectories.py --num-examples 128 --seed 64 --split train_candidate_relative_flow_rule_tail_solve_depth2 --output /tmp/megaminx-oracle.jsonl
+uv run python scripts/export_oracle_trajectories.py --num-examples 1024 --seed 64 --split train_candidate_relative_flow_rule_tail_solve_depth2 --output /tmp/megaminx-oracle-v056-1024.jsonl
+uv run python scripts/export_oracle_trajectories.py --num-examples 1024 --seed 64 --split train_candidate_relative_flow_rule_tail_solve_depth2 --output /tmp/megaminx-oracle-v056-1024-rerun.jsonl
+cmp -s /tmp/megaminx-oracle-v056-1024.jsonl /tmp/megaminx-oracle-v056-1024-rerun.jsonl; echo cmp_exit=$?
+shasum -a 256 /tmp/megaminx-oracle-v056-1024.jsonl
 ```
 
 Push the environment:
@@ -680,7 +696,7 @@ Concrete success criteria from the active goal and finish plan:
 | Hidden answer not leaked in prompts | Prompt tests assert no direct answer leakage; scramble/inverse stay in metadata | Passed |
 | v0.2.56 visible-id shortcut fix | Prompt hides numeric row ids; refreshed second slots are derived from hidden metadata; visible-id second-slot shortcut test passes | Passed |
 | Oracle warm-start export | `scripts/export_oracle_trajectories.py` exports solved v0.2.56 two-call JSONL and has a deterministic CLI regression test | Passed |
-| Unit/environment tests cover simulator and RL reward behavior | `uv run pytest -q` -> `105 passed in 11.95s` | Passed |
+| Unit/environment tests cover simulator and RL reward behavior | `uv run pytest -q` -> `105 passed`; no-cache audit rerun -> `105 passed in 12.87s` | Passed |
 | Hub package pushed and installable | `prime env status setrf/megaminx-solver --plain` reports latest version `0.2.56`; install command succeeds | Passed |
 | Hub environment public | CLI still reports visibility `PRIVATE` after public pushes; direct API PATCH attempts against the env id and slug return HTTP 405 | Blocked |
 | Hosted RL run completed | `bg0vbir6u6d521qcr8kghvvv` completed with final online reward `0.7335`, solved `0.6615`, zero tool/protocol/env errors | Passed |
@@ -704,7 +720,7 @@ The repository release steps are complete: CI passed, PR `#3` is merged to
 | --- | --- |
 | Public Hub env works | Partially blocked: owner-auth works, visibility still reports `PRIVATE` |
 | Latest Hub package installs | Passed at `0.2.56` |
-| Local tests pass | Passed: `105 passed in 11.95s` |
+| Local tests pass | Passed: `105 passed`; no-cache audit rerun -> `105 passed in 12.87s` |
 | Env errors in native probes | Passed: zero errors |
 | Native tool calls nonzero | Passed: depth-1 probes use `1.0`; v0.2.54/v0.2.55 depth-2 probes use `2.0` |
 | Trained checkpoint improves depth-1 solved by `+30pp` | Failed: best native gain is about `+2.52pp` |
@@ -750,6 +766,7 @@ an SFT/warm-start lane once Prime billing or local GPU training is available.
 | v0.2.55 continuation `gnpet9lrxx16amnytkcb8vju` | `$5.50`; stopped with step-2 checkpoint READY and step-3 degradation |
 | v0.2.55 checkpoint heldout probe attempts | `$0.00`; run creation failed with `Payment required` before IDs were allocated |
 | v0.2.56 env push/install/export | `$0.00` hosted training; env push/install and local exporter only |
+| Live wallet check after v0.2.56 | `prime wallet --plain` reported balance `$-0.80`, confirming new hosted run creation is blocked until billing is restored |
 
 ## Limitations And Next Experiments
 
@@ -775,11 +792,14 @@ Recommended next experiment:
 
 1. Keep v0.2.56 as the current package baseline because it fixes the visible-id
    slot shortcut and leaves the tail-solve reward in place.
-2. Use the oracle exporter to build a warm-start dataset, then SFT or otherwise
-   initialize the policy near the two-call solution manifold before more PPO.
-3. As soon as Prime billing allows new hosted runs, re-run matched v0.2.56 base
+2. Use the audited oracle exporter output as the warm-start source. The current
+   1,024-example seed-64 corpus solves all rows, uses exactly two native
+   `select_candidate` actions per row, and has balanced slots/directions.
+3. SFT or otherwise initialize the policy near the two-call solution manifold
+   before more PPO.
+4. As soon as Prime billing allows new hosted runs, re-run matched v0.2.56 base
    and checkpoint probes before continuing from `o68kzy5up4e65ve6lktmkuat`.
-4. Avoid more long low-LR PPO on the same distribution without heldout gates:
+5. Avoid more long low-LR PPO on the same distribution without heldout gates:
    prior online gains repeatedly failed to generalize cleanly.
 
 ## May 13 Candidate-Curriculum Addendum
@@ -794,7 +814,7 @@ Latest package:
 | --- | --- |
 | Hub package | `setrf/megaminx-solver@0.2.56` |
 | Wheel SHA256 | `f52a3858518f234c4a2df310ab465b37b536fc28ab3ad2e034373109f49e7106` |
-| Local tests | `uv run pytest -q` -> `105 passed in 11.95s` |
+| Local tests | `uv run pytest -q` -> `105 passed`; no-cache audit rerun -> `105 passed in 12.87s` |
 
 Key attempts:
 
@@ -865,6 +885,12 @@ v0.2.50 is the first candidate-frontier lane intended for a cleaner learning
 claim.
 
 Reproduction commands:
+
+The install, test, oracle-export, v0.2.54, and v0.2.55 commands above are the
+tracked release-reproduction path. The older v0.2.49-v0.2.53 commands below
+are kept as run-history provenance; some of their TOML files are local
+untracked artifacts from the rapid hosted-training search and should not be
+treated as clean release inputs.
 
 ```bash
 prime env install setrf/megaminx-solver@0.2.56 --plain

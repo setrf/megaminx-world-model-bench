@@ -1,7 +1,7 @@
 # megaminx-solver
 
 [![Prime Hub](https://img.shields.io/badge/Prime%20Hub-setrf%2Fmegaminx--solver-blue)](https://app.primeintellect.ai/dashboard/environments/setrf/megaminx-solver)
-[![Latest env](https://img.shields.io/badge/env-v0.2.54-0f766e)](https://app.primeintellect.ai/dashboard/environments/setrf/megaminx-solver)
+[![Latest env](https://img.shields.io/badge/env-v0.2.56-0f766e)](https://app.primeintellect.ai/dashboard/environments/setrf/megaminx-solver)
 [![Clean geometry](https://img.shields.io/badge/clean%20geometry-0.303-16a34a)](https://app.primeintellect.ai/dashboard/training/dbup76z9d460x4fbcfxw8yql)
 [![Breakthrough eval](https://img.shields.io/badge/v0.2.22%2035B-0.929-2563eb)](https://app.primeintellect.ai/dashboard/evaluations/vse6uoo8c9y156svyyv41qll)
 
@@ -15,7 +15,7 @@ deterministic reward from a persistent puzzle simulator.
 | --- | --- |
 | Environment id | `megaminx-solver` |
 | Hub target | `setrf/megaminx-solver` |
-| Current package | `setrf/megaminx-solver@0.2.54` |
+| Current package | `setrf/megaminx-solver@0.2.56` |
 | Type | `vf.StatefulToolEnv` |
 | Tags | `multi-turn`, `tool-env`, `spatial-reasoning`, `megaminx`, `rl`, `eval` |
 
@@ -89,6 +89,7 @@ Supported reward styles:
 - `action_gated_candidate_mask_frontier_equivalence`
 - `action_gated_candidate_geometry_frontier`
 - `action_gated_candidate_strict_frontier`
+- `action_gated_candidate_path_tail_solve`
 
 The strict eval gate is `action_gated_binary_direction`: reward is `1.0` only
 for one clean first `rotate` equal to the inverse move, and `0.0` otherwise.
@@ -164,9 +165,14 @@ first_rotate_correct
 first_rotate_face_correct
 target_face_in_candidate_set
 target_candidate_index
+second_target_candidate_index
 first_candidate_relative_flow_count
 first_candidate_relative_flow_margin
 first_candidate_relative_flow_is_candidate_max
+second_candidate_relative_flow_count
+second_candidate_relative_flow_margin
+second_candidate_relative_flow_is_candidate_max
+candidate_path_completed
 candidate_relative_flow_oracle_unique
 first_rotate_direction_correct
 first_rotate_face_id
@@ -218,17 +224,30 @@ counting-rule prompt over the same visible `+1/-1` flow tokens. It was pushed
 with wheel SHA
 `3e2815bb5fa1e28dfeb3501ed65b67de2dfcf3c2fc1b2e14278eef590eb43d95`.
 
-v0.2.54 adds `stage_candidate_relative_flow_rule_solve2_native_tool` and
-`action_gated_candidate_path_solve`, the first clean two-call candidate path
-lane. It was pushed with wheel SHA
-`9a1edd7195f08a516596efd772ef8729149b1332d7bc885e090eb52613289748`.
+v0.2.54 adds `stage_candidate_relative_flow_rule_solve2_native_tool`, a
+two-call native `select_candidate` path for depth-2 solving. The best matched
+heldout checkpoint improved solved rate modestly, but did not meet the larger
+`+30pp` acceptance target.
+
+v0.2.55 hardens the tail-solve reward with
+`action_gated_candidate_path_tail_solve`, balances the refreshed second target
+slot, and produces READY checkpoint `o68kzy5up4e65ve6lktmkuat`. Canonical
+heldout probes for that checkpoint are blocked until Prime billing is restored.
+
+v0.2.56 fixes a remaining visible-row-id shortcut in the refreshed second-slot
+selection, caps non-solving second-step partial reward below `0.50`, and adds
+`scripts/export_oracle_trajectories.py` for deterministic two-call oracle JSONL.
+The audited 1,024-row seed-64 export solves every row, uses exactly two native
+`select_candidate` actions, has balanced slots/directions, and reruns
+byte-identically with SHA256
+`0604bd14343aebb04f9b68ba77cb1dd34d1062f025d011d3961298393b3258e7`.
 
 ## Validation
 
 Install the current Hub package:
 
 ```bash
-prime env install setrf/megaminx-solver@0.2.54 --plain
+prime env install setrf/megaminx-solver@0.2.56 --plain
 ```
 
 Run local tests:
@@ -237,27 +256,26 @@ Run local tests:
 uv run pytest -q
 ```
 
-Latest result: `102 passed in 7.65s`.
+Latest result: `105 passed`; no-cache audit rerun: `105 passed in 12.87s`.
 
-Install and test the latest package:
+Export the deterministic v0.2.56 oracle warm-start corpus:
 
 ```bash
-prime env install setrf/megaminx-solver@0.2.54 --plain
-uv run pytest -q
+uv run python scripts/export_oracle_trajectories.py \
+  --num-examples 1024 \
+  --seed 64 \
+  --split train_candidate_relative_flow_rule_tail_solve_depth2 \
+  --output /tmp/megaminx-oracle-v056-1024.jsonl
 ```
 
-Run the current clean rule-flow baseline and training config:
+Run the tracked tail-solve baseline and continuation configs when Prime billing
+allows hosted training:
 
 ```bash
-prime train configs/rl/megaminx-v049-native-candidate-geometry-frontier-depth12-base-qwen9b-rpe2-fast.toml --yes --plain
-prime train configs/rl/megaminx-v049-qwen9b-candidate-geometry-frontier-depth12-rpe16-noeval.toml --yes --plain
-prime train configs/rl/megaminx-v051-native-candidate-geometry-frontier-depth12-base-qwen9b-rpe2-fast.toml --yes --plain
-prime train configs/rl/megaminx-v051-qwen9b-candidate-geometry-frontier-depth12-lr1e8-b1024-rpe16-temp07.toml --yes --plain
-prime train configs/rl/megaminx-v052-native-candidate-relative-flow-strict-frontier-depth12-base-qwen9b-rpe2-fast.toml --yes --plain
-prime train configs/rl/megaminx-v052-qwen9b-candidate-relative-flow-strict-frontier-depth12-lr1e8-b1024-rpe16-temp07.toml --yes --plain
-prime train configs/rl/megaminx-v053-native-candidate-relative-flow-rule-strict-frontier-depth12-base-qwen9b-rpe2-fast.toml --yes --plain
-prime train configs/rl/megaminx-v053-qwen9b-candidate-relative-flow-rule-strict-frontier-depth12-lr5e9-b1024-rpe16-noeval.toml --yes --plain
-prime train configs/rl/megaminx-v053-qwen9b-candidate-relative-flow-rule-strict-frontier-depth12-lr5e9-b1024-rpe16-complete2.toml --yes --plain
+prime train configs/rl/megaminx-v054-qwen9b-rule-flow-solve2-depth2-rpe16-complete6.toml --yes --plain
+prime train configs/rl/megaminx-v055-qwen9b-tail-solve-depth2-base-heldout-rpe16.toml --yes --plain
+prime train configs/rl/megaminx-v055-qwen9b-tail-solve-depth2-base-heldout2-rpe16.toml --yes --plain
+prime train configs/rl/megaminx-v055-qwen9b-tail-solve-depth2-lbuj-continue-b1024-lr1e9-rpe16.toml --yes --plain
 ```
 
 ## Current Evidence
