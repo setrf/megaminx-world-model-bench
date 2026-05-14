@@ -138,3 +138,40 @@ def test_convert_oracle_to_sft_jsonl_writes_safe_chat_records(tmp_path: Path) ->
         assert "scramble" not in item["metadata"]
         assert "inverse_solution" not in item["metadata"]
         assert "actions" not in item
+
+
+def test_validate_sft_jsonl_cli_accepts_safe_chat_records(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    convert_script = repo_root / "scripts" / "convert_oracle_to_sft_jsonl.py"
+    validate_script = repo_root / "scripts" / "validate_sft_jsonl.py"
+    oracle_output = tmp_path / "oracle.jsonl"
+    sft_output = tmp_path / "sft.jsonl"
+    _run_export(oracle_output)
+    subprocess.run(
+        [
+            sys.executable,
+            str(convert_script),
+            str(oracle_output),
+            "--output",
+            str(sft_output),
+        ],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(validate_script), str(sft_output)],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    summary = json.loads(result.stdout)
+
+    assert summary["rows"] == 2
+    assert summary["env_versions"] == {"0.2.56": 2}
+    assert summary["tool_names"] == {"select_candidate": 2}
+    assert summary["prompt_leak_count"] == 0
+    assert summary["forbidden_payload_fields"] == 0

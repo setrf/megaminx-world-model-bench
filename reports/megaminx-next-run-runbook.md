@@ -55,6 +55,9 @@ uv run python scripts/summarize_oracle_trajectories.py \
 uv run python scripts/convert_oracle_to_sft_jsonl.py \
   /tmp/megaminx-oracle-v056-1024.jsonl \
   --output /tmp/megaminx-oracle-v056-1024-sft.jsonl
+
+uv run python scripts/validate_sft_jsonl.py \
+  /tmp/megaminx-oracle-v056-1024-sft.jsonl
 ```
 
 Expected oracle JSONL SHA256:
@@ -76,6 +79,14 @@ The summary must show:
 - `final_rewards: {"1.0": 1024}`
 - `solved: {"True": 1024}`
 - `action_counts: {"2": 1024}`
+- `prompt_leak_count: 0`
+
+The SFT validation summary must also show:
+
+- `rows: 1024`
+- `env_versions: {"0.2.56": 1024}`
+- `tool_names: {"select_candidate": 1024}`
+- `forbidden_payload_fields: 0`
 - `prompt_leak_count: 0`
 
 ## 3. Run Matched v0.2.56 Heldout Probes

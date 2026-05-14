@@ -28,7 +28,7 @@ puzzle simulator.
 | Latest Hub action | `kioezfzz4ji4uquyhm0grzwc` -> `SUCCESS` |
 | Hub visibility | Still reports `PRIVATE` after `--visibility PUBLIC`; API PATCH visibility attempts return HTTP 405 |
 | Latest wheel SHA256 | `f52a3858518f234c4a2df310ab465b37b536fc28ab3ad2e034373109f49e7106` |
-| Latest local tests | `uv run pytest -q` -> `108 passed in 16.97s` |
+| Latest local tests | `uv run pytest -q` -> `109 passed in 19.77s` |
 | Latest scaffold baseline | [`etecohz0kxjx0hwpj06aoevq`](https://app.primeintellect.ai/dashboard/training/etecohz0kxjx0hwpj06aoevq): reward `0.7336`, face `0.7034`, zero errors |
 | Stopped v0.2.46 train | [`hv6ljq5jlc8w391a0q38373l`](https://app.primeintellect.ai/dashboard/training/hv6ljq5jlc8w391a0q38373l): best step `0.7618`, final step `0.6580`, cost `$4.17` |
 | v0.2.47 frontier baseline | [`v6p7exy9p8h4vbek7ujvj86c`](https://app.primeintellect.ai/dashboard/training/v6p7exy9p8h4vbek7ujvj86c): reward `0.4620`, face `0.7817`, action-frontier `0.1878` |
@@ -113,6 +113,7 @@ uv run python scripts/summarize_oracle_trajectories.py /tmp/megaminx-oracle-v056
 uv run python scripts/convert_oracle_to_sft_jsonl.py \
   /tmp/megaminx-oracle-v056-1024.jsonl \
   --output /tmp/megaminx-oracle-v056-1024-sft.jsonl
+uv run python scripts/validate_sft_jsonl.py /tmp/megaminx-oracle-v056-1024-sft.jsonl
 ```
 
 The current 1,024-row v0.2.56 oracle audit solves every row with exactly two
