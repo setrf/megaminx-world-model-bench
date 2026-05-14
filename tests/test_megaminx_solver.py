@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections import Counter
+from collections import Counter, defaultdict
 import json
 from pathlib import Path
 import tomllib
@@ -3420,7 +3420,7 @@ def test_candidate_relative_flow_rule_solve2_tail_reward_and_balanced_second_slo
             split="train_candidate_relative_flow_rule_solve2_depth2",
             min_depth=2,
             max_depth=2,
-            num_examples=96,
+            num_examples=192,
             seed=46,
             reward_style="action_gated_candidate_path_tail_solve",
             prompt_style="stage_candidate_relative_flow_rule_solve2_native_tool",
@@ -3429,9 +3429,16 @@ def test_candidate_relative_flow_rule_solve2_tail_reward_and_balanced_second_slo
             allow_text_tool_actions=False,
         )
         slot_counts: Counter[int] = Counter()
+        slots_by_visible_index_mod: dict[int, set[int]] = defaultdict(set)
         constant_rewards = []
+        visible_index_slot_rewards: dict[str, list[float]] = {direction: [] for direction in DIRECTIONS}
         for raw_row in env.get_dataset():
             row = dict(raw_row)
+            prompt_text = row["prompt"][0]["content"]
+            public_id = str(row.get("src_id", row["example_id"]))
+            assert public_id not in prompt_text
+            visible_index = int(public_id.rsplit("-", 1)[1])
+            visible_index_slot = 1 + (visible_index % 4)
             state = {"task": row}
             await env.setup_state(state)
             rollout = state["megaminx"]
@@ -3459,6 +3466,7 @@ def test_candidate_relative_flow_rule_solve2_tail_reward_and_balanced_second_slo
             target_slot = int(await second_target_candidate_index(state))
             assert target_slot in {1, 2, 3, 4}
             slot_counts[target_slot] += 1
+            slots_by_visible_index_mod[visible_index % 4].add(target_slot)
             assert rollout.inverse_solution[1][0] in rollout.second_candidate_faces
 
             constant_state = {"task": row}
@@ -3498,9 +3506,62 @@ def test_candidate_relative_flow_rule_solve2_tail_reward_and_balanced_second_slo
                 await action_gated_candidate_path_tail_solve_reward(constant_state)
             )
 
+            for fixed_direction in DIRECTIONS:
+                shortcut_state = {"task": row}
+                await env.setup_state(shortcut_state)
+                await env.env_response(
+                    [
+                        AssistantMessage(
+                            content="",
+                            tool_calls=[
+                                {
+                                    "id": f"shortcut-first-{fixed_direction}",
+                                    "name": "select_candidate",
+                                    "arguments": json.dumps(
+                                        {"index": first_index, "direction": first_direction}
+                                    ),
+                                }
+                            ],
+                        )
+                    ],
+                    shortcut_state,
+                )
+                if not shortcut_state["megaminx"].finished:
+                    await env.env_response(
+                        [
+                            AssistantMessage(
+                                content="",
+                                tool_calls=[
+                                    {
+                                        "id": f"shortcut-second-{fixed_direction}",
+                                        "name": "select_candidate",
+                                        "arguments": json.dumps(
+                                            {
+                                                "index": visible_index_slot,
+                                                "direction": fixed_direction,
+                                            }
+                                        ),
+                                    }
+                                ],
+                            )
+                        ],
+                        shortcut_state,
+                    )
+                visible_index_slot_rewards[fixed_direction].append(
+                    await action_gated_candidate_path_tail_solve_reward(shortcut_state)
+                )
+
         assert set(slot_counts) == {1, 2, 3, 4}
-        assert max(slot_counts.values()) - min(slot_counts.values()) <= 1
+        assert max(slot_counts.values()) - min(slot_counts.values()) <= 32
+        assert all(len(slots) >= 3 for slots in slots_by_visible_index_mod.values())
         assert sum(constant_rewards) / len(constant_rewards) < 0.12
+        assert (
+            max(
+                sum(rewards) / len(rewards)
+                for rewards in visible_index_slot_rewards.values()
+            )
+            < 0.45
+        )
 
     asyncio.run(run())
 
@@ -3591,7 +3652,7 @@ def test_action_gated_candidate_path_tail_solve_rewards_second_step_signal() -> 
                 assert await second_candidate_index(wrong_state) == float(second_index)
                 assert await second_candidate_face_correct(wrong_state) == 1.0
                 assert await second_rotate_direction_correct(wrong_state) == 0.0
-                assert 0.35 <= wrong_reward < 1.0
+                assert 0.35 <= wrong_reward < 0.45
                 wrong_tail_checked = True
                 break
 
@@ -5064,7 +5125,7 @@ def test_package_metadata_matches_published_environment() -> None:
     metadata = json.loads((env_dir / ".prime" / ".env-metadata.json").read_text())
 
     assert pyproject["project"]["name"] == "megaminx-solver"
-    assert pyproject["project"]["version"] == "0.2.55"
+    assert pyproject["project"]["version"] == "0.2.56"
     assert pyproject["project"]["license"] == "MIT"
     assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
         "megaminx_solver"

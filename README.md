@@ -1,10 +1,10 @@
 # Megaminx World Model Bench
 
 [![Prime Hub](https://img.shields.io/badge/Prime%20Hub-setrf%2Fmegaminx--solver-blue)](https://app.primeintellect.ai/dashboard/environments/setrf/megaminx-solver)
-[![Latest env](https://img.shields.io/badge/env-v0.2.55-0f766e)](https://app.primeintellect.ai/dashboard/environments/setrf/megaminx-solver)
+[![Latest env](https://img.shields.io/badge/env-v0.2.56-0f766e)](https://app.primeintellect.ai/dashboard/environments/setrf/megaminx-solver)
 [![Clean geometry](https://img.shields.io/badge/clean%20geometry-v0.2.50-16a34a)](https://app.primeintellect.ai/dashboard/training/dbup76z9d460x4fbcfxw8yql)
 [![GitHub branch](https://img.shields.io/badge/branch-main-black)](https://github.com/setrf/megaminx-world-model-bench/tree/main)
-[![Release tag](https://img.shields.io/badge/release-v0.2.55-0f766e)](https://github.com/setrf/megaminx-world-model-bench/releases/tag/v0.2.55)
+[![Release tag](https://img.shields.io/badge/release-v0.2.56-0f766e)](https://github.com/setrf/megaminx-world-model-bench/releases/tag/v0.2.56)
 [![License](https://img.shields.io/badge/License-MIT-0f766e)](LICENSE)
 
 Prime Lab workspace for `setrf/megaminx-solver`, a trainable Prime/Verifiers
@@ -19,15 +19,15 @@ puzzle simulator.
 | --- | --- |
 | GitHub repo | `setrf/megaminx-world-model-bench` |
 | Default branch | `main` |
-| Merged PR | [`#3`](https://github.com/setrf/megaminx-world-model-bench/pull/3) from `codex/megaminx-rl-crack-v2`; latest v0.2.55 hardening is on `main` |
-| Release tag | [`v0.2.55`](https://github.com/setrf/megaminx-world-model-bench/releases/tag/v0.2.55) |
+| Merged PR | [`#3`](https://github.com/setrf/megaminx-world-model-bench/pull/3) from `codex/megaminx-rl-crack-v2`; latest v0.2.56 hardening is on `main` |
+| Release tag | [`v0.2.56`](https://github.com/setrf/megaminx-world-model-bench/releases/tag/v0.2.56) |
 | Prime owner | `setrf` |
 | Hub environment | [`setrf/megaminx-solver`](https://app.primeintellect.ai/dashboard/environments/setrf/megaminx-solver) |
 | Environment id | `ozde27sytxjkc3wm83zv4e2c` |
-| Latest package | `setrf/megaminx-solver@0.2.55` |
+| Latest package | `setrf/megaminx-solver@0.2.56` |
 | Hub visibility | Still reports `PRIVATE` after `--visibility PUBLIC`; API PATCH visibility attempts return HTTP 405 |
-| Latest wheel SHA256 | `bb335bd1a0d7863a99bfec5b9bd217fbaf3b5c5bea088d4264f86892ce19eca1` |
-| Latest local tests | `uv run pytest -q` -> `104 passed in 8.27s` |
+| Latest wheel SHA256 | `f52a3858518f234c4a2df310ab465b37b536fc28ab3ad2e034373109f49e7106` |
+| Latest local tests | `uv run pytest -q` -> `105 passed in 11.95s` |
 | Latest scaffold baseline | [`etecohz0kxjx0hwpj06aoevq`](https://app.primeintellect.ai/dashboard/training/etecohz0kxjx0hwpj06aoevq): reward `0.7336`, face `0.7034`, zero errors |
 | Stopped v0.2.46 train | [`hv6ljq5jlc8w391a0q38373l`](https://app.primeintellect.ai/dashboard/training/hv6ljq5jlc8w391a0q38373l): best step `0.7618`, final step `0.6580`, cost `$4.17` |
 | v0.2.47 frontier baseline | [`v6p7exy9p8h4vbek7ujvj86c`](https://app.primeintellect.ai/dashboard/training/v6p7exy9p8h4vbek7ujvj86c): reward `0.4620`, face `0.7817`, action-frontier `0.1878` |
@@ -58,6 +58,7 @@ puzzle simulator.
 | v0.2.55 tail-solve base checks | [`q98zu1mmnl4z80uxo10jnt24`](https://app.primeintellect.ai/dashboard/training/q98zu1mmnl4z80uxo10jnt24) seed 146 reward `0.5833`, solved `0.5373`; [`rotjrhjd3g2189sf58qd2e5b`](https://app.primeintellect.ai/dashboard/training/rotjrhjd3g2189sf58qd2e5b) seed 246 reward `0.6309`, solved `0.5684`; both zero errors |
 | v0.2.55 continuation | [`gnpet9lrxx16amnytkcb8vju`](https://app.primeintellect.ai/dashboard/training/gnpet9lrxx16amnytkcb8vju): warm-started from `lbujflb1zyzv764lh9dhzu3s`; step 2 reward `0.6259`, solved `0.5674`, checkpoint `o68kzy5up4e65ve6lktmkuat` READY; step 3 regressed; cost `$5.50` |
 | v0.2.55 checkpoint probes | Configs exist for heldout seeds 146 and 246, but Prime rejected new run creation with `Payment required`; no canonical heldout probe result was produced |
+| v0.2.56 shortcut fix | Hides prompt example ids, removes the visible-index second-slot shortcut, caps non-solving second-step tail reward below `0.50`, and adds an oracle JSONL exporter for future SFT/warm-start work |
 | Visibility | CLI/API still report `PRIVATE` after `--visibility PUBLIC`; owner-auth install/eval/train work |
 
 ## What We Cracked
@@ -95,8 +96,18 @@ native-vs-served accounting.
 ## Quickstart
 
 ```bash
-prime env install setrf/megaminx-solver@0.2.55 --plain
+prime env install setrf/megaminx-solver@0.2.56 --plain
 uv run pytest -q
+```
+
+Export oracle trajectories for a future SFT/warm-start lane:
+
+```bash
+uv run python scripts/export_oracle_trajectories.py \
+  --num-examples 128 \
+  --seed 64 \
+  --split train_candidate_relative_flow_rule_tail_solve_depth2 \
+  --output /tmp/megaminx-oracle.jsonl
 ```
 
 Reproduce the current clean rule-flow baseline and training lane:

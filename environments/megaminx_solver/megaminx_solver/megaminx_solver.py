@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from random import Random
@@ -439,6 +440,7 @@ class RolloutMegaminx:
     initial_action_mask_counts: dict[Move, int]
     candidate_faces: tuple[str, ...] = ()
     candidate_seed: int = 0
+    candidate_slot_seed: int = 0
     move_count: int = 0
     illegal_moves: int = 0
     tool_calls: int = 0
@@ -657,6 +659,47 @@ def _candidate_geometry_faces(
             candidates[target_index],
         )
     return candidates
+
+
+def _hidden_candidate_slot_seed(
+    *,
+    split: str,
+    index: int,
+    scramble: Sequence[Move],
+    inverse_solution: Sequence[Move],
+) -> int:
+    payload = {
+        "split": split,
+        "index": index,
+        "scramble": [{"face": face, "direction": direction} for face, direction in scramble],
+        "inverse_solution": [
+            {"face": face, "direction": direction} for face, direction in inverse_solution
+        ],
+    }
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).digest()
+    return int.from_bytes(digest[:8], "big") & ((1 << 63) - 1)
+
+
+def _hidden_required_candidate_slot(
+    rollout: RolloutMegaminx,
+    next_target_face: str | None,
+) -> int | None:
+    if next_target_face not in FACES:
+        return None
+    payload = {
+        "slot_seed": rollout.candidate_slot_seed,
+        "move_count": rollout.move_count,
+        "target_face": next_target_face,
+        "move_history": [
+            {"face": face, "direction": direction} for face, direction in rollout.move_history
+        ],
+    }
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).digest()
+    return 1 + (int.from_bytes(digest[:8], "big") % 4)
 
 
 def _best_tail_value(puzzle: MegaminxPuzzle) -> float:
@@ -1866,7 +1909,7 @@ async def action_gated_candidate_path_tail_solve_reward(state: vf.State) -> floa
             return 0.25
         second_face = await second_rotate_face_correct(state)
         second_direction = await second_rotate_direction_correct(state)
-        return min(0.74, 0.35 + 0.18 * second_face + 0.12 * second_direction)
+        return min(0.49, 0.28 + 0.12 * second_face + 0.08 * second_direction)
     if await action_reaches_one_turn_frontier(state):
         return 0.30
     if await first_candidate_face_correct(state):
@@ -2095,6 +2138,17 @@ class MegaminxEnv(vf.StatefulToolEnv):
         )
         raw_candidate_seed = task.get("candidate_seed", 0)
         candidate_seed = raw_candidate_seed if isinstance(raw_candidate_seed, int) else 0
+        raw_candidate_slot_seed = task.get("candidate_slot_seed")
+        candidate_slot_seed = (
+            raw_candidate_slot_seed
+            if isinstance(raw_candidate_slot_seed, int)
+            else _hidden_candidate_slot_seed(
+                split=str(task.get("split", "")),
+                index=candidate_seed,
+                scramble=scramble,
+                inverse_solution=inverse_solution,
+            )
+        )
         state["megaminx"] = RolloutMegaminx(
             puzzle=puzzle,
             scramble=scramble,
@@ -2110,6 +2164,7 @@ class MegaminxEnv(vf.StatefulToolEnv):
             initial_action_mask_counts=initial_action_mask_counts,
             candidate_faces=candidate_faces,
             candidate_seed=candidate_seed,
+            candidate_slot_seed=candidate_slot_seed,
         )
 
     def update_tool_args(
@@ -2440,11 +2495,7 @@ class MegaminxEnv(vf.StatefulToolEnv):
                 if rollout.move_count < len(rollout.inverse_solution)
                 else None
             )
-            next_target_slot = (
-                1 + ((rollout.candidate_seed + rollout.move_count - 1) % 4)
-                if next_target_face
-                else None
-            )
+            next_target_slot = _hidden_required_candidate_slot(rollout, next_target_face)
             rollout.second_candidate_puzzle = rollout.puzzle.copy()
             rollout.candidate_faces = tuple(
                 _candidate_geometry_faces(
@@ -2803,6 +2854,12 @@ def _build_row(
         "reward_style": reward_style,
         "prompt_style": prompt_style,
         "candidate_seed": index,
+        "candidate_slot_seed": _hidden_candidate_slot_seed(
+            split=split,
+            index=index,
+            scramble=scramble,
+            inverse_solution=inverse_solution,
+        ),
     }
     if candidate_faces is not None:
         task["candidate_faces"] = candidate_faces
@@ -3253,7 +3310,7 @@ def _build_prompt(
         else None
     )
     lines = [
-        f"Example: {split}-{index:05d}",
+        f"Task split: {split}",
         f"Scramble depth: {depth}",
         f"Move budget: {move_budget}",
         "Goal: solve within the move budget by choosing candidate slots and directions."
