@@ -537,13 +537,14 @@ Concrete success criteria from the active goal and finish plan:
 | Final report with commands, costs, limitations | This report includes design, rewards, runs, heldout table, costs, reproduction commands, and limitations | Passed |
 | CI with `uv run pytest` on PRs | `.github/workflows/ci.yml` runs `uv run pytest` on `pull_request` | Passed |
 | License | `LICENSE` is MIT; root and env `pyproject.toml` declare MIT | Passed |
-| PR/merge/tag | Local branch contains uncommitted changes at audit time; PR/tag work is still to be completed after scoping/staging | Pending |
+| PR/merge/tag | PR [`#3`](https://github.com/setrf/megaminx-world-model-bench/pull/3) is open from `codex/megaminx-rl-crack-v2`; merge/tag remain pending until CI/review | Partial |
 
 Audit conclusion: the technical RL objective is partially achieved with a real
 but modest positive checkpoint on a harder two-turn depth-2 task. The original
 aggressive `+30pp` acceptance target and public Hub visibility are not achieved.
-The repository release steps remain pending until the scoped changes are
-committed, pushed, and opened as a PR.
+The repository release steps are partially complete: changes are committed and
+pushed, and PR `#3` is open. Merge and release tag remain pending until CI and
+review are complete.
 
 ## Acceptance Status
 
