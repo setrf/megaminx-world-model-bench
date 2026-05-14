@@ -256,7 +256,7 @@ Run local tests:
 uv run pytest -q
 ```
 
-Latest result: `105 passed`; no-cache audit rerun: `105 passed in 12.87s`.
+Latest result: `107 passed in 17.44s`.
 
 Export the deterministic v0.2.56 oracle warm-start corpus:
 
