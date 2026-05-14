@@ -91,6 +91,7 @@ REWARD_STYLES = {
     "action_gated_candidate_geometry_frontier",
     "action_gated_candidate_strict_frontier",
     "action_gated_candidate_path_solve",
+    "action_gated_candidate_path_tail_solve",
 }
 PROMPT_STYLES = {
     "default",
@@ -437,6 +438,7 @@ class RolloutMegaminx:
     initial_affected_faces: tuple[str, ...]
     initial_action_mask_counts: dict[Move, int]
     candidate_faces: tuple[str, ...] = ()
+    candidate_seed: int = 0
     move_count: int = 0
     illegal_moves: int = 0
     tool_calls: int = 0
@@ -460,6 +462,9 @@ class RolloutMegaminx:
     first_prediction_item_count: int = 0
     first_prediction_extra_count: int = 0
     move_history: list[Move] = field(default_factory=list)
+    candidate_index_history: list[int] = field(default_factory=list)
+    second_candidate_faces: tuple[str, ...] = ()
+    second_candidate_puzzle: MegaminxPuzzle | None = None
 
     def solved(self) -> bool:
         return self.puzzle.is_solved()
@@ -604,6 +609,8 @@ def _candidate_geometry_faces(
     puzzle: MegaminxPuzzle,
     index: int,
     count: int = 4,
+    required_face: str | None = None,
+    required_slot: int | None = None,
 ) -> list[str]:
     affected = set(_affected_faces(puzzle))
     mask_counts = _action_mask_counts(puzzle)
@@ -634,8 +641,21 @@ def _candidate_geometry_faces(
         )
 
     candidates = [face for *_scores, face in sorted(scored_faces)[:count]]
+    if required_face in FACES and required_face not in candidates:
+        candidates[-1] = required_face
     rng = Random(1103 * (index + 1) + 17 * len(affected))
     rng.shuffle(candidates)
+    if (
+        required_face in candidates
+        and required_slot is not None
+        and 1 <= required_slot <= len(candidates)
+    ):
+        target_index = candidates.index(required_face)
+        desired_index = required_slot - 1
+        candidates[target_index], candidates[desired_index] = (
+            candidates[desired_index],
+            candidates[target_index],
+        )
     return candidates
 
 
@@ -882,6 +902,13 @@ async def first_candidate_index(state: vf.State) -> float:
     return float(rollout.first_candidate_index)
 
 
+async def second_candidate_index(state: vf.State) -> float:
+    rollout = _rollout_from_state(state)
+    if not rollout or len(rollout.candidate_index_history) < 2:
+        return -1.0
+    return float(rollout.candidate_index_history[1])
+
+
 async def first_candidate_face_correct(state: vf.State) -> float:
     rollout = _rollout_from_state(state)
     if not rollout or rollout.first_candidate_index is None or not rollout.inverse_solution:
@@ -897,6 +924,33 @@ async def first_candidate_face_correct(state: vf.State) -> float:
     if candidate_index < 0 or candidate_index >= len(candidate_faces):
         return 0.0
     return float(candidate_faces[candidate_index] == rollout.inverse_solution[0][0])
+
+
+async def second_target_candidate_index(state: vf.State) -> float:
+    rollout = _rollout_from_state(state)
+    if not rollout or len(rollout.inverse_solution) < 2:
+        return -1.0
+    candidate_faces = rollout.second_candidate_faces or rollout.candidate_faces
+    target_face = rollout.inverse_solution[1][0]
+    try:
+        return float(candidate_faces.index(target_face) + 1)
+    except ValueError:
+        return -1.0
+
+
+async def second_candidate_face_correct(state: vf.State) -> float:
+    rollout = _rollout_from_state(state)
+    if not rollout or len(rollout.move_history) < 2 or len(rollout.inverse_solution) < 2:
+        return 0.0
+    candidate_faces = rollout.second_candidate_faces or rollout.candidate_faces
+    candidate_index = (
+        rollout.candidate_index_history[1] - 1
+        if len(rollout.candidate_index_history) >= 2
+        else -1
+    )
+    if candidate_index < 0 or candidate_index >= len(candidate_faces):
+        return 0.0
+    return float(candidate_faces[candidate_index] == rollout.inverse_solution[1][0])
 
 
 def _first_candidate_face_from_state(state: vf.State) -> str | None:
@@ -1031,6 +1085,52 @@ async def candidate_relative_flow_oracle_unique(state: vf.State) -> float:
     return float(sum(score == max_score for _, score in scores) == 1)
 
 
+def _second_candidate_relative_flow_stats(state: vf.State) -> tuple[int, int, int, bool]:
+    rollout = _rollout_from_state(state)
+    if (
+        not rollout
+        or len(rollout.move_history) < 2
+        or not rollout.second_candidate_puzzle
+        or not rollout.second_candidate_faces
+    ):
+        return 0, 0, 0, False
+    chosen_move = rollout.move_history[1]
+    scores: list[tuple[Move, int]] = []
+    for face in rollout.second_candidate_faces:
+        if face not in FACES:
+            continue
+        for direction in DIRECTIONS:
+            scores.append(
+                (
+                    (face, direction),
+                    _relative_flow_count(rollout.second_candidate_puzzle, face, direction),
+                )
+            )
+    if not scores:
+        return 0, 0, 0, False
+    score_map = dict(scores)
+    chosen_score = score_map.get(chosen_move, 0)
+    opposite = (chosen_move[0], _opposite_direction(chosen_move[1]))
+    opposite_score = score_map.get(opposite, 0)
+    max_score = max(score for _, score in scores)
+    return chosen_score, opposite_score, chosen_score - opposite_score, chosen_score == max_score
+
+
+async def second_candidate_relative_flow_count(state: vf.State) -> float:
+    chosen_score, _, _, _ = _second_candidate_relative_flow_stats(state)
+    return float(chosen_score)
+
+
+async def second_candidate_relative_flow_margin(state: vf.State) -> float:
+    _, _, margin, _ = _second_candidate_relative_flow_stats(state)
+    return float(margin)
+
+
+async def second_candidate_relative_flow_is_candidate_max(state: vf.State) -> float:
+    _, _, _, is_max = _second_candidate_relative_flow_stats(state)
+    return float(is_max)
+
+
 async def first_rotate_direction_correct(state: vf.State) -> float:
     rollout = _rollout_from_state(state)
     if not rollout or not rollout.first_rotate or not rollout.inverse_solution:
@@ -1085,6 +1185,14 @@ async def second_rotate_direction_correct(state: vf.State) -> float:
     if not rollout or len(rollout.move_history) < 2 or len(rollout.inverse_solution) < 2:
         return 0.0
     return float(rollout.move_history[1][1] == rollout.inverse_solution[1][1])
+
+
+async def candidate_path_completed(state: vf.State) -> float:
+    rollout = _rollout_from_state(state)
+    if not rollout or not rollout.inverse_solution:
+        return 0.0
+    required_moves = min(rollout.move_budget, len(rollout.inverse_solution))
+    return float(rollout.move_count >= required_moves)
 
 
 async def first_rotate_neighbor_overlap(state: vf.State) -> float:
@@ -1277,6 +1385,7 @@ async def reward_style(state: vf.State) -> float:
         "action_gated_candidate_geometry_frontier": 20.0,
         "action_gated_candidate_strict_frontier": 21.0,
         "action_gated_candidate_path_solve": 22.0,
+        "action_gated_candidate_path_tail_solve": 23.0,
     }.get(rollout.reward_style, 0.0)
 
 
@@ -1740,6 +1849,33 @@ async def action_gated_candidate_path_solve_reward(state: vf.State) -> float:
     return 0.0
 
 
+async def action_gated_candidate_path_tail_solve_reward(state: vf.State) -> float:
+    rollout = _rollout_from_state(state)
+    if not rollout or not rollout.inverse_solution:
+        return 0.0
+    if not _is_clean_candidate_path_attempt(rollout):
+        return 0.0
+
+    if rollout.solved():
+        return 1.0
+
+    prefix = _inverse_prefix_length(rollout)
+    required_moves = min(rollout.move_budget, len(rollout.inverse_solution))
+    if prefix >= 1:
+        if rollout.move_count < required_moves:
+            return 0.25
+        second_face = await second_rotate_face_correct(state)
+        second_direction = await second_rotate_direction_correct(state)
+        return min(0.74, 0.35 + 0.18 * second_face + 0.12 * second_direction)
+    if await action_reaches_one_turn_frontier(state):
+        return 0.30
+    if await first_candidate_face_correct(state):
+        return 0.16 + 0.04 * await first_rotate_direction_correct(state)
+    if await first_candidate_relative_flow_is_candidate_max(state):
+        return 0.05
+    return 0.0
+
+
 async def action_gated_candidate_index_reward(state: vf.State) -> float:
     rollout = _rollout_from_state(state)
     if not rollout or not rollout.inverse_solution:
@@ -1957,6 +2093,8 @@ class MegaminxEnv(vf.StatefulToolEnv):
             if isinstance(raw_candidate_faces, list)
             else ()
         )
+        raw_candidate_seed = task.get("candidate_seed", 0)
+        candidate_seed = raw_candidate_seed if isinstance(raw_candidate_seed, int) else 0
         state["megaminx"] = RolloutMegaminx(
             puzzle=puzzle,
             scramble=scramble,
@@ -1971,6 +2109,7 @@ class MegaminxEnv(vf.StatefulToolEnv):
             initial_affected_faces=initial_affected,
             initial_action_mask_counts=initial_action_mask_counts,
             candidate_faces=candidate_faces,
+            candidate_seed=candidate_seed,
         )
 
     def update_tool_args(
@@ -2286,6 +2425,7 @@ class MegaminxEnv(vf.StatefulToolEnv):
         rollout.move_count += 1
         rollout.last_move = f"select_candidate:{candidate_index}:{move_to_text((face, direction))}"
         rollout.move_history.append((face, direction))
+        rollout.candidate_index_history.append(candidate_index)
         if rollout.first_candidate_index is None:
             rollout.first_candidate_index = candidate_index
         if rollout.first_rotate is None:
@@ -2295,9 +2435,27 @@ class MegaminxEnv(vf.StatefulToolEnv):
         if rollout.prompt_style in CANDIDATE_MULTISTEP_PROMPT_STYLES:
             if rollout.finished:
                 return _compact_terminal_observation(rollout, "Action recorded.")
-            rollout.candidate_faces = tuple(
-                _candidate_geometry_faces(rollout.puzzle, rollout.move_count)
+            next_target_face = (
+                rollout.inverse_solution[rollout.move_count][0]
+                if rollout.move_count < len(rollout.inverse_solution)
+                else None
             )
+            next_target_slot = (
+                1 + ((rollout.candidate_seed + rollout.move_count - 1) % 4)
+                if next_target_face
+                else None
+            )
+            rollout.second_candidate_puzzle = rollout.puzzle.copy()
+            rollout.candidate_faces = tuple(
+                _candidate_geometry_faces(
+                    rollout.puzzle,
+                    rollout.candidate_seed + rollout.move_count,
+                    required_face=next_target_face,
+                    required_slot=next_target_slot,
+                )
+            )
+            if rollout.move_count == 1:
+                rollout.second_candidate_faces = rollout.candidate_faces
             return _candidate_path_observation(rollout, "Action recorded.")
         if _is_one_shot_candidate_rollout(rollout):
             return _compact_terminal_observation(rollout, "Action recorded.")
@@ -2644,6 +2802,7 @@ def _build_row(
         "inverse_solution": _encode_moves(inverse_solution),
         "reward_style": reward_style,
         "prompt_style": prompt_style,
+        "candidate_seed": index,
     }
     if candidate_faces is not None:
         task["candidate_faces"] = candidate_faces
@@ -2721,7 +2880,10 @@ def _build_rubric(reward_style_name: str) -> vf.Rubric:
         target_face_in_candidate_set,
         target_candidate_index,
         first_candidate_index,
+        second_candidate_index,
         first_candidate_face_correct,
+        second_target_candidate_index,
+        second_candidate_face_correct,
         first_candidate_public_mask_count,
         first_candidate_public_mask_is_max,
         first_candidate_public_mask_rank_credit,
@@ -2729,12 +2891,16 @@ def _build_rubric(reward_style_name: str) -> vf.Rubric:
         first_candidate_relative_flow_margin,
         first_candidate_relative_flow_is_candidate_max,
         candidate_relative_flow_oracle_unique,
+        second_candidate_relative_flow_count,
+        second_candidate_relative_flow_margin,
+        second_candidate_relative_flow_is_candidate_max,
         first_rotate_direction_correct,
         first_rotate_face_id,
         first_rotate_direction_id,
         second_rotate_correct,
         second_rotate_face_correct,
         second_rotate_direction_correct,
+        candidate_path_completed,
         inverse_prefix_length,
         first_rotate_neighbor_overlap,
         first_rotate_mask_count,
@@ -2799,6 +2965,8 @@ def _build_rubric(reward_style_name: str) -> vf.Rubric:
         if reward_style_name == "action_gated_candidate_strict_frontier"
         else action_gated_candidate_path_solve_reward
         if reward_style_name == "action_gated_candidate_path_solve"
+        else action_gated_candidate_path_tail_solve_reward
+        if reward_style_name == "action_gated_candidate_path_tail_solve"
         else action_gated_candidate_geometry_frontier_reward
         if reward_style_name == "action_gated_candidate_geometry_frontier"
         else action_gated_candidate_index_reward
@@ -2905,6 +3073,7 @@ def _validate_styles(reward_style: str, prompt_style: str) -> None:
             "action_gated_candidate_geometry_frontier",
             "action_gated_candidate_strict_frontier",
             "action_gated_candidate_path_solve",
+            "action_gated_candidate_path_tail_solve",
         }
         and prompt_style not in CANDIDATE_GEOMETRY_FRONTIER_PROMPT_STYLES
     ):

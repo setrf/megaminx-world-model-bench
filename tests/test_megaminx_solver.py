@@ -16,6 +16,7 @@ from megaminx_solver.megaminx_solver import (
     action_gated_candidate_index_reward,
     action_gated_candidate_geometry_frontier_reward,
     action_gated_candidate_path_solve_reward,
+    action_gated_candidate_path_tail_solve_reward,
     action_gated_candidate_strict_frontier_reward,
     action_gated_candidate_mask_frontier_equivalence_reward,
     action_gated_candidate_mask_index_rank_reward,
@@ -41,6 +42,13 @@ from megaminx_solver.megaminx_solver import (
     second_rotate_correct,
     second_rotate_face_correct,
     second_rotate_direction_correct,
+    second_candidate_index,
+    second_target_candidate_index,
+    second_candidate_face_correct,
+    second_candidate_relative_flow_count,
+    second_candidate_relative_flow_margin,
+    second_candidate_relative_flow_is_candidate_max,
+    candidate_path_completed,
     inverse_prefix_length,
     first_candidate_face_correct,
     first_candidate_public_mask_count,
@@ -3406,6 +3414,243 @@ def test_candidate_relative_flow_rule_solve2_refreshes_candidates_and_solves_dep
     asyncio.run(run())
 
 
+def test_candidate_relative_flow_rule_solve2_tail_reward_and_balanced_second_slots() -> None:
+    async def run() -> None:
+        env = load_environment(
+            split="train_candidate_relative_flow_rule_solve2_depth2",
+            min_depth=2,
+            max_depth=2,
+            num_examples=96,
+            seed=46,
+            reward_style="action_gated_candidate_path_tail_solve",
+            prompt_style="stage_candidate_relative_flow_rule_solve2_native_tool",
+            max_turns=4,
+            move_budget=2,
+            allow_text_tool_actions=False,
+        )
+        slot_counts: Counter[int] = Counter()
+        constant_rewards = []
+        for raw_row in env.get_dataset():
+            row = dict(raw_row)
+            state = {"task": row}
+            await env.setup_state(state)
+            rollout = state["megaminx"]
+            first_face, first_direction = rollout.inverse_solution[0]
+            first_index = row["candidate_faces"].index(first_face) + 1
+            await env.env_response(
+                [
+                    AssistantMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": "first-call",
+                                "name": "select_candidate",
+                                "arguments": json.dumps(
+                                    {"index": first_index, "direction": first_direction}
+                                ),
+                            }
+                        ],
+                    )
+                ],
+                state,
+            )
+            assert await action_gated_candidate_path_tail_solve_reward(state) == 0.25
+            assert await candidate_path_completed(state) == 0.0
+            target_slot = int(await second_target_candidate_index(state))
+            assert target_slot in {1, 2, 3, 4}
+            slot_counts[target_slot] += 1
+            assert rollout.inverse_solution[1][0] in rollout.second_candidate_faces
+
+            constant_state = {"task": row}
+            await env.setup_state(constant_state)
+            await env.env_response(
+                [
+                    AssistantMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": "constant-first",
+                                "name": "select_candidate",
+                                "arguments": json.dumps({"index": 1, "direction": "cw"}),
+                            }
+                        ],
+                    )
+                ],
+                constant_state,
+            )
+            if not constant_state["megaminx"].finished:
+                await env.env_response(
+                    [
+                        AssistantMessage(
+                            content="",
+                            tool_calls=[
+                                {
+                                    "id": "constant-second",
+                                    "name": "select_candidate",
+                                    "arguments": json.dumps({"index": 1, "direction": "cw"}),
+                                }
+                            ],
+                        )
+                    ],
+                    constant_state,
+                )
+            constant_rewards.append(
+                await action_gated_candidate_path_tail_solve_reward(constant_state)
+            )
+
+        assert set(slot_counts) == {1, 2, 3, 4}
+        assert max(slot_counts.values()) - min(slot_counts.values()) <= 1
+        assert sum(constant_rewards) / len(constant_rewards) < 0.12
+
+    asyncio.run(run())
+
+
+def test_action_gated_candidate_path_tail_solve_rewards_second_step_signal() -> None:
+    async def run() -> None:
+        env = load_environment(
+            split="train_candidate_relative_flow_rule_solve2_depth2",
+            min_depth=2,
+            max_depth=2,
+            num_examples=48,
+            seed=104,
+            reward_style="action_gated_candidate_path_tail_solve",
+            prompt_style="stage_candidate_relative_flow_rule_solve2_native_tool",
+            max_turns=4,
+            move_budget=2,
+            allow_text_tool_actions=False,
+        )
+        wrong_tail_checked = False
+        for raw_row in env.get_dataset():
+            row = dict(raw_row)
+            state = {"task": row}
+            await env.setup_state(state)
+            rollout = state["megaminx"]
+            first_face, first_direction = rollout.inverse_solution[0]
+            first_index = row["candidate_faces"].index(first_face) + 1
+            await env.env_response(
+                [
+                    AssistantMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": "first-call",
+                                "name": "select_candidate",
+                                "arguments": json.dumps(
+                                    {"index": first_index, "direction": first_direction}
+                                ),
+                            }
+                        ],
+                    )
+                ],
+                state,
+            )
+            second_face, second_direction = rollout.inverse_solution[1]
+            second_index = rollout.candidate_faces.index(second_face) + 1
+
+            wrong_state = {"task": row}
+            await env.setup_state(wrong_state)
+            wrong_rollout = wrong_state["megaminx"]
+            await env.env_response(
+                [
+                    AssistantMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": "wrong-first",
+                                "name": "select_candidate",
+                                "arguments": json.dumps(
+                                    {"index": first_index, "direction": first_direction}
+                                ),
+                            }
+                        ],
+                    )
+                ],
+                wrong_state,
+            )
+            wrong_direction = "ccw" if second_direction == "cw" else "cw"
+            await env.env_response(
+                [
+                    AssistantMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": "wrong-second",
+                                "name": "select_candidate",
+                                "arguments": json.dumps(
+                                    {"index": second_index, "direction": wrong_direction}
+                                ),
+                            }
+                        ],
+                    )
+                ],
+                wrong_state,
+            )
+            wrong_reward = await action_gated_candidate_path_tail_solve_reward(wrong_state)
+            if not wrong_rollout.solved():
+                assert await candidate_path_completed(wrong_state) == 1.0
+                assert await second_candidate_index(wrong_state) == float(second_index)
+                assert await second_candidate_face_correct(wrong_state) == 1.0
+                assert await second_rotate_direction_correct(wrong_state) == 0.0
+                assert 0.35 <= wrong_reward < 1.0
+                wrong_tail_checked = True
+                break
+
+        assert wrong_tail_checked
+
+        solved_state = {"task": dict(env.get_dataset()[0])}
+        await env.setup_state(solved_state)
+        solved_rollout = solved_state["megaminx"]
+        first_face, first_direction = solved_rollout.inverse_solution[0]
+        first_index = solved_state["task"]["candidate_faces"].index(first_face) + 1
+        await env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "solve-first",
+                            "name": "select_candidate",
+                            "arguments": json.dumps(
+                                {"index": first_index, "direction": first_direction}
+                            ),
+                        }
+                    ],
+                )
+            ],
+            solved_state,
+        )
+        second_face, second_direction = solved_rollout.inverse_solution[1]
+        second_index = solved_rollout.candidate_faces.index(second_face) + 1
+        await env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "solve-second",
+                            "name": "select_candidate",
+                            "arguments": json.dumps(
+                                {"index": second_index, "direction": second_direction}
+                            ),
+                        }
+                    ],
+                )
+            ],
+            solved_state,
+        )
+        assert solved_rollout.solved()
+        assert await second_rotate_correct(solved_state) == 1.0
+        assert await second_candidate_face_correct(solved_state) == 1.0
+        assert await second_candidate_relative_flow_count(solved_state) >= 1.0
+        assert await second_candidate_relative_flow_margin(solved_state) > 0.0
+        assert await second_candidate_relative_flow_is_candidate_max(solved_state) == 1.0
+        assert await candidate_path_completed(solved_state) == 1.0
+        assert await action_gated_candidate_path_tail_solve_reward(solved_state) == 1.0
+        assert await reward_style(solved_state) == 23.0
+
+    asyncio.run(run())
+
+
 def test_target_face_in_candidate_set_metric_for_geometry_frontier() -> None:
     async def run() -> None:
         env = load_environment(
@@ -4819,7 +5064,7 @@ def test_package_metadata_matches_published_environment() -> None:
     metadata = json.loads((env_dir / ".prime" / ".env-metadata.json").read_text())
 
     assert pyproject["project"]["name"] == "megaminx-solver"
-    assert pyproject["project"]["version"] == "0.2.54"
+    assert pyproject["project"]["version"] == "0.2.55"
     assert pyproject["project"]["license"] == "MIT"
     assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
         "megaminx_solver"
