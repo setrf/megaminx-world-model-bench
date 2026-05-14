@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 
-EXPECTED_ENV_VERSION = "0.2.56"
+EXPECTED_ENV_VERSION = "0.2.57"
 EXPECTED_FORMAT = "megaminx-oracle-select-candidate-jsonl/v1"
 EXPECTED_TOOL = "select_candidate"
 EXPECTED_ROLES = ("system", "user", "assistant", "tool", "assistant", "tool")

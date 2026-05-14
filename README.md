@@ -1,10 +1,10 @@
 # Megaminx World Model Bench
 
 [![Prime Hub](https://img.shields.io/badge/Prime%20Hub-setrf%2Fmegaminx--solver-blue)](https://app.primeintellect.ai/dashboard/environments/setrf/megaminx-solver)
-[![Latest env](https://img.shields.io/badge/env-v0.2.56-0f766e)](https://app.primeintellect.ai/dashboard/environments/setrf/megaminx-solver)
+[![Latest env](https://img.shields.io/badge/env-v0.2.57-0f766e)](https://app.primeintellect.ai/dashboard/environments/setrf/megaminx-solver)
 [![Report](https://img.shields.io/badge/report-megaminx--rl--report-2563eb)](reports/megaminx-rl-report.md)
 [![GitHub branch](https://img.shields.io/badge/branch-main-black)](https://github.com/setrf/megaminx-world-model-bench/tree/main)
-[![Release tag](https://img.shields.io/badge/release-v0.2.56-0f766e)](https://github.com/setrf/megaminx-world-model-bench/releases/tag/v0.2.56)
+[![Release tag](https://img.shields.io/badge/release-v0.2.57-0f766e)](https://github.com/setrf/megaminx-world-model-bench/releases/tag/v0.2.57)
 [![License](https://img.shields.io/badge/License-MIT-0f766e)](LICENSE)
 
 `megaminx-world-model-bench` is a Prime Intellect / Verifiers reinforcement
@@ -28,14 +28,12 @@ the hosted RL and local warm-start experiments.
 | GitHub repository | <https://github.com/setrf/megaminx-world-model-bench> |
 | Prime environment | <https://app.primeintellect.ai/dashboard/environments/setrf/megaminx-solver> |
 | Hub slug | `setrf/megaminx-solver` |
-| Latest package | `setrf/megaminx-solver@0.2.56` |
+| Latest package | `setrf/megaminx-solver@0.2.57` |
 | Latest report | [`reports/megaminx-rl-report.md`](reports/megaminx-rl-report.md) |
 | Next-run runbook | [`reports/megaminx-next-run-runbook.md`](reports/megaminx-next-run-runbook.md) |
 | License | [`MIT`](LICENSE) |
 
-Note: the Hub package is pushed and owner-auth install/eval/train flows work,
-but Prime CLI/API visibility checks still reported `PRIVATE` after public push
-attempts. The Prime link above is the canonical environment URL.
+Prime now reports `setrf/megaminx-solver` as `PUBLIC` on the Environment Hub.
 
 ## Why This Exists
 
@@ -208,7 +206,7 @@ The project tried several prompt families:
 | Two-call candidate-path style | `select_candidate` twice | Depth-2 solving with refreshed observations after the first move. |
 | Prediction styles | `predict_rotate` | Whether a model can predict local transition dynamics before acting. |
 
-The current main environment release is v0.2.56. It focuses on
+The current technical lane is v0.2.56. It focuses on
 `stage_candidate_relative_flow_rule_solve2_native_tool` with
 `action_gated_candidate_path_tail_solve`, plus deterministic oracle export for
 SFT warm-start experiments.
@@ -312,7 +310,7 @@ hosted Prime probes against the base model and the warm-started checkpoint.
 Install the current Hub package if you have Prime access:
 
 ```bash
-prime env install setrf/megaminx-solver@0.2.56 --plain
+prime env install setrf/megaminx-solver@0.2.57 --plain
 ```
 
 Run the local test suite from this repository:
@@ -324,7 +322,7 @@ uv run pytest -q
 Latest recorded local result:
 
 ```text
-129 passed in 34.88s
+129 passed in 45.50s
 ```
 
 Export deterministic oracle trajectories for the current two-call tail-solve
@@ -335,21 +333,21 @@ uv run python scripts/export_oracle_trajectories.py \
   --num-examples 1024 \
   --seed 64 \
   --split train_candidate_relative_flow_rule_tail_solve_depth2 \
-  --output /tmp/megaminx-oracle-v056-1024.jsonl
+  --output /tmp/megaminx-oracle-v057-1024.jsonl
 
 uv run python scripts/summarize_oracle_trajectories.py \
-  /tmp/megaminx-oracle-v056-1024.jsonl
+  /tmp/megaminx-oracle-v057-1024.jsonl
 ```
 
 Convert those trajectories into chat/tool-call SFT rows:
 
 ```bash
 uv run python scripts/convert_oracle_to_sft_jsonl.py \
-  /tmp/megaminx-oracle-v056-1024.jsonl \
-  --output /tmp/megaminx-oracle-v056-1024-sft.jsonl
+  /tmp/megaminx-oracle-v057-1024.jsonl \
+  --output /tmp/megaminx-oracle-v057-1024-sft.jsonl
 
 uv run python scripts/validate_sft_jsonl.py \
-  /tmp/megaminx-oracle-v056-1024-sft.jsonl
+  /tmp/megaminx-oracle-v057-1024-sft.jsonl
 ```
 
 Check whether the repo is ready for the next hosted Prime probes:
@@ -404,8 +402,6 @@ started returning payment/auth errors. The exact recovery sequence is in
   making capability claims.
 - Served chat-completions evals and Hosted Training native tool rollouts are
   not interchangeable. Native tool-call metrics are the credible RL lane.
-- The latest Prime Hub visibility still needs owner/platform resolution before
-  the environment is reliably public to non-owner accounts.
 - The best hosted RL results were modest. The strongest learning signal so far
   is the local oracle-SFT warm start, which should be re-run on a larger GPU and
   then used to initialize hosted RL.

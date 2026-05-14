@@ -48,7 +48,7 @@ def test_export_oracle_trajectories_cli_writes_deterministic_jsonl(tmp_path: Pat
     assert first_records == second_records
     assert len(first_records) == 2
     for record in first_records:
-        assert record["expected_env_version"] == "0.2.56"
+        assert record["expected_env_version"] == "0.2.57"
         assert record["scramble_depth"] == 2
         assert record["move_budget"] == 2
         assert record["reward_style"] == "action_gated_candidate_path_tail_solve"
@@ -123,7 +123,7 @@ def test_summarize_oracle_trajectories_cli_validates_export(tmp_path: Path) -> N
     summary = json.loads(result.stdout)
 
     assert summary["rows"] == len(records) == 2
-    assert summary["env_versions"] == {"0.2.56": 2}
+    assert summary["env_versions"] == {"0.2.57": 2}
     assert summary["action_counts"] == {"2": 2}
     assert summary["final_rewards"] == {"1.0": 2}
     assert summary["solved"] == {"True": 2}
@@ -163,7 +163,7 @@ def test_convert_oracle_to_sft_jsonl_writes_safe_chat_records(tmp_path: Path) ->
         assert set(item) == {"messages", "metadata", "tools"}
         assert item["messages"] == source["messages"]
         assert item["tools"] == source["tools"]
-        assert item["metadata"]["env_version"] == "0.2.56"
+        assert item["metadata"]["env_version"] == "0.2.57"
         assert item["metadata"]["reward_style"] == "action_gated_candidate_path_tail_solve"
         assert "example_id" not in item["metadata"]
         assert "row_index" not in item["metadata"]
@@ -206,7 +206,7 @@ def test_validate_sft_jsonl_cli_accepts_safe_chat_records(tmp_path: Path) -> Non
     summary = json.loads(result.stdout)
 
     assert summary["rows"] == 2
-    assert summary["env_versions"] == {"0.2.56": 2}
+    assert summary["env_versions"] == {"0.2.57": 2}
     assert summary["tool_names"] == {"select_candidate": 2}
     assert summary["prompt_leak_count"] == 0
     assert summary["forbidden_payload_fields"] == 0

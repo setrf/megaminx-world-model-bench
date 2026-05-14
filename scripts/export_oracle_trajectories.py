@@ -33,7 +33,7 @@ from megaminx_solver.megaminx_solver import (  # noqa: E402
 from verifiers.types import AssistantMessage  # noqa: E402
 
 
-EXPECTED_ENV_VERSION = "0.2.56"
+EXPECTED_ENV_VERSION = "0.2.57"
 DEFAULT_SPLIT = "train_candidate_relative_flow_rule_tail_solve_depth2"
 PROMPT_STYLE = "stage_candidate_relative_flow_rule_solve2_native_tool"
 REWARD_STYLE = "action_gated_candidate_path_tail_solve"
@@ -311,7 +311,7 @@ async def export_oracle_trajectories(
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Export deterministic v0.2.56 depth-2 Megaminx oracle select_candidate "
+            "Export deterministic v0.2.57 depth-2 Megaminx oracle select_candidate "
             "trajectories as JSONL."
         )
     )

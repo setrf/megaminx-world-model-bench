@@ -1,7 +1,7 @@
 # megaminx-solver
 
 [![Prime Hub](https://img.shields.io/badge/Prime%20Hub-setrf%2Fmegaminx--solver-blue)](https://app.primeintellect.ai/dashboard/environments/setrf/megaminx-solver)
-[![Latest env](https://img.shields.io/badge/env-v0.2.56-0f766e)](https://app.primeintellect.ai/dashboard/environments/setrf/megaminx-solver)
+[![Latest env](https://img.shields.io/badge/env-v0.2.57-0f766e)](https://app.primeintellect.ai/dashboard/environments/setrf/megaminx-solver)
 [![Breakthrough eval](https://img.shields.io/badge/v0.2.22%2035B-0.929-2563eb)](https://app.primeintellect.ai/dashboard/evaluations/vse6uoo8c9y156svyyv41qll)
 [![GitHub](https://img.shields.io/badge/GitHub-setrf%2Fmegaminx--world--model--bench-black)](https://github.com/setrf/megaminx-world-model-bench)
 
@@ -371,11 +371,11 @@ printed in the current prompts. v0.2.56 specifically removes row-id leakage
 from the visible prompt and derives refreshed second-step candidate slots from
 hidden scramble/action metadata.
 
-The v0.2.56 1,024-row oracle export is byte-stable when re-run with the same
+The v0.2.57 1,024-row oracle export is byte-stable when re-run with the same
 arguments. Recorded SHA256:
 
 ```text
-1038afa6958030832c028840dafc22fc3724206461608e2ed809c90fa9695e7b
+729d03b69c56d2c9e1775d452cf20abed05fd5e142b0eb4db737ff11187247f5
 ```
 
 ## Leakage And Shortcut Controls
@@ -401,8 +401,8 @@ current hardened baseline.
 
 | Claim | Evidence |
 | --- | --- |
-| Package pushed | `setrf/megaminx-solver@0.2.56`, Hub action `SUCCESS` |
-| Local tests | `uv run pytest -q` recorded `129 passed in 34.88s` |
+| Package pushed | `setrf/megaminx-solver@0.2.57`, Hub hash `35d4bb90de33`, wheel SHA256 `744af86fdf6e0effc8ae54f1f3f08c7aa8227c06bd9bb7cd58cd56c8df48b40a` |
+| Local tests | `uv run pytest -q` recorded `129 passed in 45.50s` |
 | Prompt breakthrough | v0.2.22 35B eval solved `0.929` on 240 heldout examples: <https://app.primeintellect.ai/dashboard/evaluations/vse6uoo8c9y156svyyv41qll> |
 | Clean native RL lane | v0.2.54 two-call candidate-path run reached online reward `0.7335`, solved `0.6615`, two native calls, zero env errors |
 | Best matched hosted heldout gain | v0.2.54 checkpoint improved solved from `0.5625` to `0.6048` on one heldout seed |
@@ -417,7 +417,7 @@ The full evidence trail is in the GitHub report:
 Install the environment:
 
 ```bash
-prime env install setrf/megaminx-solver@0.2.56 --plain
+prime env install setrf/megaminx-solver@0.2.57 --plain
 ```
 
 No environment variables are required to import or load the environment. Hosted
@@ -436,18 +436,18 @@ uv run python scripts/export_oracle_trajectories.py \
   --num-examples 1024 \
   --seed 64 \
   --split train_candidate_relative_flow_rule_tail_solve_depth2 \
-  --output /tmp/megaminx-oracle-v056-1024.jsonl
+  --output /tmp/megaminx-oracle-v057-1024.jsonl
 ```
 
 Convert and validate SFT data:
 
 ```bash
 uv run python scripts/convert_oracle_to_sft_jsonl.py \
-  /tmp/megaminx-oracle-v056-1024.jsonl \
-  --output /tmp/megaminx-oracle-v056-1024-sft.jsonl
+  /tmp/megaminx-oracle-v057-1024.jsonl \
+  --output /tmp/megaminx-oracle-v057-1024-sft.jsonl
 
 uv run python scripts/validate_sft_jsonl.py \
-  /tmp/megaminx-oracle-v056-1024-sft.jsonl
+  /tmp/megaminx-oracle-v057-1024-sft.jsonl
 ```
 
 Check readiness before hosted probes:
@@ -466,8 +466,7 @@ The next hosted probe sequence is documented at:
 - Some historical runs used scaffolded prompts to discover a learnable
   curriculum. Use v0.2.56 for the current hardened lane.
 - Native Hosted Training and served evals measure different protocol surfaces.
-- Prime visibility checks still reported `PRIVATE` after public push attempts,
-  despite owner-auth installs and Hub package pushes succeeding.
+- Prime now reports the Hub environment as `PUBLIC`.
 - Hosted run creation later hit billing/auth limits, so the prepared v0.2.56
   matched heldout probes remain to be run.
 
@@ -485,3 +484,4 @@ The next hosted probe sequence is documented at:
 | v0.2.54 | Two-call depth-2 candidate path solved after refreshed observations. |
 | v0.2.55 | Tail-solve reward hardening and balanced second-step targets. |
 | v0.2.56 | Visible-id shortcut fix, second-step reward cap, deterministic oracle export, SFT warm-start path. |
+| v0.2.57 | Documentation and package metadata refresh for GitHub and Prime Hub. |

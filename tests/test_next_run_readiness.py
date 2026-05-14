@@ -32,7 +32,7 @@ def test_next_run_readiness_cli_validates_configs_without_prime() -> None:
 
     assert payload["repo"] == "setrf/megaminx-world-model-bench"
     assert payload["prime_environment"] == "setrf/megaminx-solver"
-    assert payload["expected_env_version"] == "0.2.56"
+    assert payload["expected_env_version"] == "0.2.57"
     assert payload["ready_for_local_validation"] is True
     assert payload["ready_for_hosted_prime_runs"] is False
 
@@ -143,8 +143,9 @@ def test_next_run_readiness_keeps_local_ready_when_prime_check_fails(
 
 
 def test_prime_access_check_requires_expected_hub_status(monkeypatch) -> None:
-    def fake_run_prime_command(args: list[str], *, timeout: int) -> dict:
+    def fake_run_prime_command(args: list[str], *, timeout: int, line_limit: int = 12) -> dict:
         assert timeout == 7
+        assert line_limit >= 4
         command = " ".join(args)
         if "wallet" in args:
             return {"ok": True, "returncode": 0, "stdout": ["Balance: $10.00"], "stderr": []}
@@ -166,5 +167,5 @@ def test_prime_access_check_requires_expected_hub_status(monkeypatch) -> None:
     check = check_next_run_readiness.check_prime_access(7)
 
     assert check["status"] == "failed"
-    assert "env_status: expected '0.2.56' in output" in check["details"]["errors"]
-    assert "env_status: expected '8a1d0168b96c' in output" in check["details"]["errors"]
+    assert "env_status: expected '0.2.57' in output" in check["details"]["errors"]
+    assert "env_status: expected '35d4bb90de33' in output" in check["details"]["errors"]

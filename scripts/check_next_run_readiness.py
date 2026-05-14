@@ -25,12 +25,13 @@ from summarize_oracle_trajectories import (  # noqa: E402
 from validate_sft_jsonl import validate_sft_jsonl  # noqa: E402
 
 
-DEFAULT_ORACLE_JSONL = Path("/tmp/megaminx-oracle-v056-1024.jsonl")
-DEFAULT_SFT_JSONL = Path("/tmp/megaminx-oracle-v056-1024-sft.jsonl")
-EXPECTED_ORACLE_SHA256 = "1038afa6958030832c028840dafc22fc3724206461608e2ed809c90fa9695e7b"
-EXPECTED_SFT_SHA256 = "59b9db129517f3a6f86a868f06179826a032b2e0d07c4393d5a9ae168e8b1ec3"
+DEFAULT_ORACLE_JSONL = Path("/tmp/megaminx-oracle-v057-1024.jsonl")
+DEFAULT_SFT_JSONL = Path("/tmp/megaminx-oracle-v057-1024-sft.jsonl")
+EXPECTED_ORACLE_SHA256 = "729d03b69c56d2c9e1775d452cf20abed05fd5e142b0eb4db737ff11187247f5"
+EXPECTED_SFT_SHA256 = "9e5470722d93b7bfde6c58144bf8b1eb1c06aa455a40199caeac76c1439632b5"
 EXPECTED_CANONICAL_ROWS = 1024
-EXPECTED_HUB_HASH = "8a1d0168b96c"
+EXPECTED_PROBE_ENV_VERSION = "0.2.56"
+EXPECTED_HUB_HASH = "35d4bb90de33"
 EXPECTED_HUB_ACTION_STATUS = "SUCCESS"
 
 EXPECTED_V056_CONFIGS: dict[str, dict[str, Any]] = {
@@ -80,10 +81,12 @@ def _skipped(name: str, details: dict[str, Any] | None = None) -> dict[str, Any]
 def _redact(value: str) -> str:
     value = re.sub(r"(api[_-]?key|token|authorization)\s*[:=]\s*\S+", r"\1=<redacted>", value, flags=re.I)
     value = re.sub(r"Bearer\s+\S+", "Bearer <redacted>", value, flags=re.I)
+    value = re.sub(r"((?:user|wallet)\s+id\s*[: ]+)\S+", r"\1<redacted>", value, flags=re.I)
+    value = re.sub(r"(email\s+)\S+@\S+", r"\1<redacted>", value, flags=re.I)
     return value.strip()
 
 
-def _first_lines(value: str, *, limit: int = 4) -> list[str]:
+def _first_lines(value: str, *, limit: int = 12) -> list[str]:
     lines = [_redact(line)[:240] for line in value.splitlines() if line.strip()]
     return lines[:limit]
 
@@ -122,7 +125,7 @@ def check_v056_configs() -> dict[str, Any]:
 
         _assert_equal(errors, f"{name} buffer seed", config.get("buffer", {}).get("seed"), spec["buffer_seed"])
         _assert_equal(errors, f"{name} env id", env.get("id"), "setrf/megaminx-solver")
-        _assert_equal(errors, f"{name} env version", env.get("version"), EXPECTED_ENV_VERSION)
+        _assert_equal(errors, f"{name} env version", env.get("version"), EXPECTED_PROBE_ENV_VERSION)
         _assert_equal(errors, f"{name} split", args.get("split"), spec["split"])
         _assert_equal(errors, f"{name} seed", args.get("seed"), spec["env_seed"])
         _assert_equal(errors, f"{name} min_depth", args.get("min_depth"), 2)
@@ -232,7 +235,7 @@ def check_sft_artifact(path: Path, *, require: bool, allow_noncanonical: bool) -
     return _passed("SFT JSONL", details)
 
 
-def _run_prime_command(args: list[str], *, timeout: int) -> dict[str, Any]:
+def _run_prime_command(args: list[str], *, timeout: int, line_limit: int = 12) -> dict[str, Any]:
     try:
         result = subprocess.run(
             args,
@@ -249,8 +252,8 @@ def _run_prime_command(args: list[str], *, timeout: int) -> dict[str, Any]:
     return {
         "ok": result.returncode == 0,
         "returncode": result.returncode,
-        "stdout": _first_lines(result.stdout),
-        "stderr": _first_lines(result.stderr),
+        "stdout": _first_lines(result.stdout, limit=line_limit),
+        "stderr": _first_lines(result.stderr, limit=line_limit),
     }
 
 
@@ -268,8 +271,8 @@ def _combined_output(details: dict[str, Any]) -> str:
 
 def check_prime_access(timeout: int) -> dict[str, Any]:
     checks = {
-        "whoami": _run_prime_command(["prime", "whoami", "--plain"], timeout=timeout),
-        "wallet": _run_prime_command(["prime", "wallet", "--plain"], timeout=timeout),
+        "whoami": _run_prime_command(["prime", "whoami", "--plain"], timeout=timeout, line_limit=8),
+        "wallet": _run_prime_command(["prime", "wallet", "--plain"], timeout=timeout, line_limit=4),
         "env_status": _run_prime_command(
             ["prime", "env", "status", "setrf/megaminx-solver", "--plain"],
             timeout=timeout,
@@ -300,7 +303,10 @@ def check_prime_access(timeout: int) -> dict[str, Any]:
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Check whether the Megaminx v0.2.56 next-run path is ready."
+        description=(
+            "Check whether the Megaminx v0.2.57 package and v0.2.56 matched-probe "
+            "path are ready."
+        )
     )
     parser.add_argument("--oracle-jsonl", type=Path, default=DEFAULT_ORACLE_JSONL)
     parser.add_argument("--sft-jsonl", type=Path, default=DEFAULT_SFT_JSONL)

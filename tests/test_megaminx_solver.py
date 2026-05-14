@@ -5125,7 +5125,7 @@ def test_package_metadata_matches_published_environment() -> None:
     metadata = json.loads((env_dir / ".prime" / ".env-metadata.json").read_text())
 
     assert pyproject["project"]["name"] == "megaminx-solver"
-    assert pyproject["project"]["version"] == "0.2.56"
+    assert pyproject["project"]["version"] == "0.2.57"
     assert pyproject["project"]["license"] == "MIT"
     assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
         "megaminx_solver"
