@@ -13,17 +13,73 @@ from megaminx_solver.megaminx_solver import (
     action_gated_direction_reward,
     action_gated_exact_direction_reward,
     action_gated_binary_direction_reward,
+    action_gated_candidate_index_reward,
+    action_gated_candidate_geometry_frontier_reward,
+    action_gated_candidate_path_solve_reward,
+    action_gated_candidate_strict_frontier_reward,
+    action_gated_candidate_mask_frontier_equivalence_reward,
+    action_gated_candidate_mask_index_rank_reward,
+    action_gated_candidate_tournament_reward,
+    action_gated_face_discovery_reward,
+    action_gated_face_tournament_reward,
+    action_gated_predict_rotate_value_strict_reward,
+    action_gated_predict_rotate_transition_reward,
+    action_gated_counterfactual_frontier_value_strict_reward,
+    action_gated_counterfactual_frontier_strict_reward,
+    action_gated_mask_overlap_strict_shaped_direction_reward,
+    action_gated_overlap_strict_shaped_direction_reward,
     action_gated_strict_shaped_direction_reward,
     action_gated_overlap_reward,
+    action_reaches_one_turn_frontier,
+    _action_mask_counts,
     action_taken,
+    first_rotate_mask_count,
+    first_rotate_mask_is_max,
     first_rotate_correct,
     first_rotate_direction_correct,
+    first_rotate_direction_id,
+    second_rotate_correct,
+    second_rotate_face_correct,
+    second_rotate_direction_correct,
+    inverse_prefix_length,
+    first_candidate_face_correct,
+    first_candidate_public_mask_count,
+    first_candidate_public_mask_is_max,
+    first_candidate_public_mask_rank_credit,
+    first_candidate_relative_flow_count,
+    first_candidate_relative_flow_margin,
+    first_candidate_relative_flow_is_candidate_max,
     first_rotate_face_correct,
+    first_rotate_face_id,
+    first_candidate_index,
+    target_candidate_index,
+    candidate_relative_flow_oracle_unique,
+    first_rotate_in_candidate_set,
+    target_face_in_candidate_set,
     first_rotate_neighbor_overlap,
+    first_rotate_counterfactual_frontier,
+    frontier_equivalent,
+    first_rotate_counterfactual_value,
+    first_rotate_counterfactual_value_norm,
+    first_rotate_counterfactual_value_rank,
+    first_prediction_strip_accuracy,
+    first_prediction_exact_strip_count,
+    first_prediction_char_accuracy,
+    first_prediction_quality,
+    first_prediction_valid,
+    first_prediction_item_count,
+    first_prediction_extra_count,
+    first_rotate_face_frontier_viable,
+    first_rotate_frontier_tail_best_mask_count,
+    first_rotate_frontier_tail_count,
+    first_rotate_frontier_tail_unique,
+    initial_max_action_mask_count,
     native_tool_call_count,
     private_text_action_count,
     protocol_violation_count,
     reward_style,
+    candidate_select_call_count,
+    predict_rotate_call_count,
     rotate_call_count,
     solved_reward,
     text_tool_action_count,
@@ -47,6 +103,28 @@ from verifiers.types import AssistantMessage
 
 def sticker_counter(puzzle: MegaminxPuzzle) -> Counter[str]:
     return Counter(puzzle.stickers.values())
+
+
+def relative_flow_rule_action_from_prompt(prompt: str) -> tuple[int, str]:
+    table = prompt.split("slot | face | ring | relative_flow\n", 1)[1].split(
+        "Initial compact observation:", 1
+    )[0]
+    best: tuple[tuple[int, int, int], int, str] | None = None
+    for line in table.strip().splitlines():
+        parts = [part.strip() for part in line.split("|")]
+        if len(parts) != 4:
+            continue
+        slot = int(parts[0])
+        flow = parts[3]
+        for direction, count in (
+            ("cw", flow.count(":+1(")),
+            ("ccw", flow.count(":-1(")),
+        ):
+            key = (count, -slot, int(direction == "ccw"))
+            if best is None or key > best[0]:
+                best = (key, slot, direction)
+    assert best is not None
+    return best[1], best[2]
 
 
 def test_topology_counts() -> None:
@@ -423,10 +501,20 @@ def test_allow_text_tool_actions_defaults_by_prompt_style() -> None:
         "sensor_match_native_tool",
         "stage_direction_flow_native_tool",
         "stage_solve_direction_flow_native_tool",
+        "stage_solve_direction_flow_native_tool_v2",
+        "stage_solve_action_table_native_tool",
+        "stage_solve_action_mask_native_tool",
     ):
         kwargs = (
             {"split": "depth1"}
-            if prompt_style in {"stage_direction_flow_native_tool", "stage_solve_direction_flow_native_tool"}
+            if prompt_style
+            in {
+                "stage_direction_flow_native_tool",
+                "stage_solve_direction_flow_native_tool",
+                "stage_solve_direction_flow_native_tool_v2",
+                "stage_solve_action_table_native_tool",
+                "stage_solve_action_mask_native_tool",
+            }
             else {}
         )
         env = load_environment(prompt_style=prompt_style, **kwargs)
@@ -700,6 +788,81 @@ def test_stage_solve_direction_flow_json_action_prompt_lists_solve_columns() -> 
     assert row["inverse_solution"] not in prompt
 
 
+def test_stage_solve_direction_flow_native_tool_v2_lists_all_candidates_without_face_hint() -> None:
+    env = load_environment(
+        split="depth1",
+        num_examples=1,
+        seed=41,
+        reward_style="action_gated_binary_direction",
+        prompt_style="stage_solve_direction_flow_native_tool_v2",
+        move_budget=1,
+    )
+    row = dict(env.get_dataset()[0])
+    prompt = "\n".join(message["content"] for message in row["prompt"])
+    puzzle = MegaminxPuzzle.solved(DEFAULT_TOPOLOGY)
+    puzzle.apply_moves([(item["face"], item["direction"]) for item in json.loads(row["scramble"])])
+
+    assert env.env_args["allow_text_tool_actions"] is False
+    assert "Native tool mode: compare the direction-flow table, then call rotate directly." in prompt
+    assert "Structured state sensors:" in prompt
+    assert "Static topology rules:" in prompt
+    assert "Candidate neighbor sets for face matching:" in prompt
+    assert "Candidate-local moved strips:" in prompt
+    assert "All-candidate solve-direction flow table:" in prompt
+    assert (
+        "candidate | destination | solved_target | current | "
+        "expected_current_if_solve_cw | expected_current_if_solve_ccw"
+    ) in prompt
+    assert "Staged face hint:" not in prompt
+    assert "Use face " not in prompt
+    assert "Only choose rotate actions on face" not in prompt
+    assert "Solve-direction flow table for face" not in prompt
+    assert "Return exactly one JSON object" not in prompt
+    assert "Choose exactly one legal action from this menu" not in prompt
+    assert prompt.count(" | solved_target=") == len(FACES) * 5
+    for candidate in FACES:
+        assert f"{candidate} ring: {' '.join(DEFAULT_TOPOLOGY.neighbor_rings[candidate])}" in prompt
+    for forbidden in ("correct_direction", "target_direction", "matched_source", "winner", "best"):
+        assert forbidden not in prompt.lower()
+    assert row["answer"] not in prompt
+    assert row["scramble"] not in prompt
+    assert row["inverse_solution"] not in prompt
+
+
+def test_stage_solve_direction_flow_native_tool_v2_depth_range_contract() -> None:
+    env = load_environment(
+        min_depth=1,
+        max_depth=2,
+        num_examples=2,
+        seed=44,
+        reward_style="action_gated_strict_shaped_direction",
+        prompt_style="stage_solve_direction_flow_native_tool_v2",
+        move_budget=1,
+    )
+    rows = [dict(row) for row in env.get_dataset()]
+    assert {row["scramble_depth"] for row in rows} == {1, 2}
+    assert all(
+        "All-candidate solve-direction flow table:" in "\n".join(
+            message["content"] for message in row["prompt"]
+        )
+        for row in rows
+    )
+
+    try:
+        load_environment(
+            min_depth=1,
+            max_depth=3,
+            num_examples=3,
+            reward_style="action_gated_strict_shaped_direction",
+            prompt_style="stage_solve_direction_flow_native_tool_v2",
+            move_budget=1,
+        )
+    except ValueError as error:
+        assert "only defined for depths 1-2" in str(error)
+    else:
+        raise AssertionError("Expected v2 solve-direction prompt to reject max_depth > 2")
+
+
 def test_stage_direction_flow_prompt_local_oracle_solves_all_depth1_moves() -> None:
     for prompt_style in (
         "stage_direction_flow_json_action",
@@ -757,6 +920,289 @@ def test_stage_direction_flow_prompt_local_oracle_solves_all_depth1_moves() -> N
             else:
                 raise AssertionError(f"Prompt has ambiguous solve-flow rows:\n{prompt}")
             assert chosen == (inverse_solution[0]["face"], inverse_solution[0]["direction"])
+
+
+def test_stage_solve_direction_flow_native_tool_v2_oracle_solves_all_depth1_moves() -> None:
+    env = load_environment(
+        split="depth1",
+        num_examples=len(FACES) * len(DIRECTIONS),
+        seed=1042,
+        reward_style="action_gated_binary_direction",
+        prompt_style="stage_solve_direction_flow_native_tool_v2",
+        move_budget=1,
+    )
+    for row in env.get_dataset():
+        row = dict(row)
+        prompt = "\n".join(message["content"] for message in row["prompt"])
+        inverse_solution = json.loads(row["inverse_solution"])
+        rows = [
+            line
+            for line in prompt.splitlines()
+            if " | solved_target=" in line and "expected_current_if_solve_" in line
+        ]
+        assert len(rows) == len(FACES) * 5
+        matches: list[tuple[str, str]] = []
+        for candidate in FACES:
+            candidate_rows = [line for line in rows if line.startswith(f"{candidate} | ")]
+            assert len(candidate_rows) == 5
+            cw_matches = []
+            ccw_matches = []
+            for line in candidate_rows:
+                parts = [part.strip() for part in line.split("|")]
+                current = parts[3].split("=", 1)[1]
+                expected_current_if_solve_cw = parts[4].split("=", 1)[1]
+                expected_current_if_solve_ccw = parts[5].split("=", 1)[1]
+                cw_matches.append(current == expected_current_if_solve_cw)
+                ccw_matches.append(current == expected_current_if_solve_ccw)
+            if all(cw_matches):
+                matches.append((candidate, "cw"))
+            if all(ccw_matches):
+                matches.append((candidate, "ccw"))
+        assert matches == [(inverse_solution[0]["face"], inverse_solution[0]["direction"])]
+
+
+def test_stage_solve_action_table_native_tool_lists_all_actions_without_hint_or_scores() -> None:
+    env = load_environment(
+        split="depth1",
+        num_examples=1,
+        seed=41,
+        reward_style="action_gated_overlap_strict_shaped_direction",
+        prompt_style="stage_solve_action_table_native_tool",
+        move_budget=1,
+    )
+    row = dict(env.get_dataset()[0])
+    prompt = "\n".join(message["content"] for message in row["prompt"])
+
+    assert env.env_args["allow_text_tool_actions"] is False
+    assert "Native tool mode: call the rotate tool directly." in prompt
+    assert "Do not write JSON, prose, or analysis before the tool call." in prompt
+    assert "Solve-action evidence table:" in prompt
+    assert "action | evidence" in prompt
+    assert "All-candidate solve-direction flow table:" not in prompt
+    assert "Structured state sensors:" not in prompt
+    assert "Static topology rules:" not in prompt
+    assert "Candidate-local moved strips:" not in prompt
+    assert "Return exactly one JSON object" not in prompt
+    assert "Choose exactly one legal action from this menu" not in prompt
+    assert "Staged face hint:" not in prompt
+    assert "Use face " not in prompt
+    assert "Only choose rotate actions on face" not in prompt
+    assert prompt.count(" current=") == len(FACES) * len(DIRECTIONS) * 5
+    for face in FACES:
+        for direction in DIRECTIONS:
+            assert f"{face}:{direction} | " in prompt
+    for forbidden in (
+        "correct_direction",
+        "target_direction",
+        "matched_source",
+        "winner",
+        "best",
+        "score",
+        "scramble:",
+        "inverse_solution",
+    ):
+        assert forbidden not in prompt.lower()
+    assert row["scramble"] not in prompt
+    assert row["inverse_solution"] not in prompt
+
+
+def test_stage_solve_action_table_native_tool_depth_range_contract() -> None:
+    env = load_environment(
+        min_depth=1,
+        max_depth=2,
+        num_examples=2,
+        seed=45,
+        reward_style="action_gated_overlap_strict_shaped_direction",
+        prompt_style="stage_solve_action_table_native_tool",
+        move_budget=1,
+    )
+    rows = [dict(row) for row in env.get_dataset()]
+    assert {row["scramble_depth"] for row in rows} == {1, 2}
+    assert all(
+        "Solve-action evidence table:" in "\n".join(
+            message["content"] for message in row["prompt"]
+        )
+        for row in rows
+    )
+
+    try:
+        load_environment(
+            min_depth=1,
+            max_depth=3,
+            num_examples=3,
+            reward_style="action_gated_overlap_strict_shaped_direction",
+            prompt_style="stage_solve_action_table_native_tool",
+            move_budget=1,
+        )
+    except ValueError as error:
+        assert "only defined for depths 1-2" in str(error)
+    else:
+        raise AssertionError("Expected action-table prompt to reject max_depth > 2")
+
+
+def test_stage_solve_action_table_native_tool_oracle_solves_all_depth1_moves() -> None:
+    env = load_environment(
+        split="depth1",
+        num_examples=len(FACES) * len(DIRECTIONS),
+        seed=1042,
+        reward_style="action_gated_binary_direction",
+        prompt_style="stage_solve_action_table_native_tool",
+        move_budget=1,
+    )
+    for row in env.get_dataset():
+        row = dict(row)
+        prompt = "\n".join(message["content"] for message in row["prompt"])
+        inverse_solution = json.loads(row["inverse_solution"])
+        rows = [
+            line
+            for line in prompt.splitlines()
+            if any(line.startswith(f"{face}:{direction} | ") for face in FACES for direction in DIRECTIONS)
+        ]
+        assert len(rows) == len(FACES) * len(DIRECTIONS)
+        matches: list[tuple[str, str]] = []
+        for line in rows:
+            action, *evidence = [part.strip() for part in line.split("|")]
+            assert len(evidence) == 5
+            if all(
+                part.split(" current=", 1)[1].split(" expected=", 1)[0]
+                == part.split(" expected=", 1)[1]
+                for part in evidence
+            ):
+                face, direction = action.split(":", 1)
+                matches.append((face, direction))
+        assert matches == [(inverse_solution[0]["face"], inverse_solution[0]["direction"])]
+
+
+def _parse_action_mask_rows(prompt: str) -> dict[tuple[str, str], str]:
+    masks: dict[tuple[str, str], str] = {}
+    for line in prompt.splitlines():
+        if not any(line.startswith(f"{face} | ") for face in FACES):
+            continue
+        face, _ring, cw_mask, ccw_mask = [part.strip() for part in line.split("|")]
+        masks[(face, "cw")] = cw_mask
+        masks[(face, "ccw")] = ccw_mask
+    return masks
+
+
+def test_stage_solve_action_mask_native_tool_lists_compact_masks_without_leaks() -> None:
+    env = load_environment(
+        split="depth1",
+        num_examples=1,
+        seed=41,
+        reward_style="action_gated_mask_overlap_strict_shaped_direction",
+        prompt_style="stage_solve_action_mask_native_tool",
+        move_budget=1,
+    )
+    row = dict(env.get_dataset()[0])
+    prompt = "\n".join(message["content"] for message in row["prompt"])
+
+    assert env.env_args["allow_text_tool_actions"] is False
+    assert "Native tool mode: call the rotate tool directly." in prompt
+    assert "Solve-action equality-mask table:" in prompt
+    assert "face | ring | cw_mask | ccw_mask" in prompt
+    assert "Solve-action evidence table:" not in prompt
+    assert "All-candidate solve-direction flow table:" not in prompt
+    assert "Structured state sensors:" not in prompt
+    assert "Static topology rules:" not in prompt
+    assert "Candidate-local moved strips:" not in prompt
+    assert "current=" not in prompt
+    assert "expected=" not in prompt
+    assert "Return exactly one JSON object" not in prompt
+    assert "Choose exactly one legal action from this menu" not in prompt
+    assert "Staged face hint:" not in prompt
+
+    masks = _parse_action_mask_rows(prompt)
+    assert len(masks) == len(FACES) * len(DIRECTIONS)
+    assert all(len(mask) == 5 and set(mask) <= {"0", "1"} for mask in masks.values())
+    mask_section = prompt.split("Solve-action equality-mask table:", 1)[1].split(
+        "Initial observation:", 1
+    )[0]
+    for forbidden in (
+        "answer",
+        "correct",
+        "target",
+        "winner",
+        "best",
+        "score",
+        "scramble:",
+        "inverse_solution",
+    ):
+        assert forbidden not in mask_section.lower()
+    assert row["scramble"] not in prompt
+    assert row["inverse_solution"] not in prompt
+
+
+def test_stage_solve_action_mask_native_tool_depth_range_contract() -> None:
+    env = load_environment(
+        min_depth=1,
+        max_depth=2,
+        num_examples=2,
+        seed=45,
+        reward_style="action_gated_mask_overlap_strict_shaped_direction",
+        prompt_style="stage_solve_action_mask_native_tool",
+        move_budget=1,
+    )
+    rows = [dict(row) for row in env.get_dataset()]
+    assert {row["scramble_depth"] for row in rows} == {1, 2}
+    assert all(
+        "Solve-action equality-mask table:" in "\n".join(
+            message["content"] for message in row["prompt"]
+        )
+        for row in rows
+    )
+
+    try:
+        load_environment(
+            min_depth=1,
+            max_depth=3,
+            num_examples=3,
+            reward_style="action_gated_mask_overlap_strict_shaped_direction",
+            prompt_style="stage_solve_action_mask_native_tool",
+            move_budget=1,
+        )
+    except ValueError as error:
+        assert "only defined for depths 1-2" in str(error)
+    else:
+        raise AssertionError("Expected action-mask prompt to reject max_depth > 2")
+
+
+def test_stage_solve_action_mask_native_tool_oracle_solves_all_depth1_moves() -> None:
+    env = load_environment(
+        split="depth1",
+        num_examples=len(FACES) * len(DIRECTIONS),
+        seed=1042,
+        reward_style="action_gated_binary_direction",
+        prompt_style="stage_solve_action_mask_native_tool",
+        move_budget=1,
+    )
+    for row in env.get_dataset():
+        row = dict(row)
+        prompt = "\n".join(message["content"] for message in row["prompt"])
+        inverse_solution = json.loads(row["inverse_solution"])
+        masks = _parse_action_mask_rows(prompt)
+        matches = [move for move, mask in masks.items() if mask == "11111"]
+        assert matches == [(inverse_solution[0]["face"], inverse_solution[0]["direction"])]
+
+
+def test_stage_solve_action_mask_native_tool_keeps_depth2_inverse_among_max_masks() -> None:
+    env = load_environment(
+        min_depth=2,
+        max_depth=2,
+        num_examples=50,
+        seed=91,
+        reward_style="action_gated_mask_overlap_strict_shaped_direction",
+        prompt_style="stage_solve_action_mask_native_tool",
+        move_budget=1,
+    )
+    for row in env.get_dataset():
+        row = dict(row)
+        prompt = "\n".join(message["content"] for message in row["prompt"])
+        inverse_solution = json.loads(row["inverse_solution"])
+        masks = _parse_action_mask_rows(prompt)
+        counts = {move: mask.count("1") for move, mask in masks.items()}
+        max_count = max(counts.values())
+        inverse_first = (inverse_solution[0]["face"], inverse_solution[0]["direction"])
+        assert counts[inverse_first] == max_count
 
 
 def test_staged_face_hint_prompt_styles_reject_non_depth1_splits() -> None:
@@ -1196,6 +1642,2300 @@ def test_action_gated_strict_shaped_direction_reward_teaches_clean_partial_credi
     asyncio.run(run())
 
 
+def test_action_gated_overlap_strict_shaped_direction_reward_smooths_face_without_wrong_face_direction_bonus() -> None:
+    async def run() -> None:
+        env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=42,
+            reward_style="action_gated_overlap_strict_shaped_direction",
+            prompt_style="stage_solve_action_table_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        state = {"task": dict(env.get_dataset()[0])}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        target_face, target_direction = rollout.inverse_solution[0]
+        wrong_direction = next(direction for direction in DIRECTIONS if direction != target_direction)
+        wrong_face = next(face for face in FACES if face != target_face)
+
+        rollout.move_count = 1
+        rollout.rotate_call_count = 1
+        rollout.native_tool_call_count = 1
+
+        rollout.first_rotate = (target_face, wrong_direction)
+        correct_face_wrong_direction = await action_gated_overlap_strict_shaped_direction_reward(state)
+        assert abs(correct_face_wrong_direction - 0.52) < 1e-9
+
+        rollout.first_rotate = (wrong_face, target_direction)
+        wrong_face_correct_direction = await action_gated_overlap_strict_shaped_direction_reward(state)
+        rollout.first_rotate = (wrong_face, wrong_direction)
+        wrong_face_wrong_direction = await action_gated_overlap_strict_shaped_direction_reward(state)
+
+        assert wrong_face_correct_direction == wrong_face_wrong_direction
+        assert wrong_face_correct_direction < correct_face_wrong_direction
+
+        solved_env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=42,
+            reward_style="action_gated_overlap_strict_shaped_direction",
+            prompt_style="stage_solve_action_table_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        solved_state = {"task": dict(solved_env.get_dataset()[0])}
+        await solved_env.setup_state(solved_state)
+        solved_rollout = solved_state["megaminx"]
+        face, direction = solved_rollout.inverse_solution[0]
+        solved_message = AssistantMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "native-call",
+                    "name": "rotate",
+                    "arguments": json.dumps({"face": face, "direction": direction}),
+                }
+            ],
+        )
+        await solved_env.env_response([solved_message], solved_state)
+
+        assert solved_rollout.solved()
+        assert await action_gated_overlap_strict_shaped_direction_reward(solved_state) == 1.0
+
+        invalid_env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=42,
+            reward_style="action_gated_overlap_strict_shaped_direction",
+            prompt_style="stage_solve_action_table_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        invalid_state = {"task": dict(invalid_env.get_dataset()[0])}
+        await invalid_env.setup_state(invalid_state)
+        assert await action_gated_overlap_strict_shaped_direction_reward(invalid_state) == 0.0
+
+    asyncio.run(run())
+
+
+def test_action_gated_mask_overlap_strict_shaped_direction_reward_uses_public_mask_signal() -> None:
+    async def run() -> None:
+        env = load_environment(
+            min_depth=2,
+            max_depth=2,
+            num_examples=1,
+            seed=91,
+            reward_style="action_gated_mask_overlap_strict_shaped_direction",
+            prompt_style="stage_solve_action_mask_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        state = {"task": dict(env.get_dataset()[0])}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        assert await reward_style(state) == 9.0
+        assert await initial_max_action_mask_count(state) >= 1.0
+
+        max_mask_action = max(
+            rollout.initial_action_mask_counts,
+            key=lambda move: rollout.initial_action_mask_counts[move],
+        )
+        message = AssistantMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "native-call",
+                    "name": "rotate",
+                    "arguments": json.dumps(
+                        {"face": max_mask_action[0], "direction": max_mask_action[1]}
+                    ),
+                }
+            ],
+        )
+        await env.env_response([message], state)
+
+        reward = await action_gated_mask_overlap_strict_shaped_direction_reward(state)
+        assert await first_rotate_mask_is_max(state) == 1.0
+        assert await first_rotate_mask_count(state) == float(
+            rollout.initial_action_mask_counts[max_mask_action]
+        )
+        assert 0.0 < reward < 1.0
+
+        solved_env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=42,
+            reward_style="action_gated_mask_overlap_strict_shaped_direction",
+            prompt_style="stage_solve_action_mask_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        solved_state = {"task": dict(solved_env.get_dataset()[0])}
+        await solved_env.setup_state(solved_state)
+        solved_rollout = solved_state["megaminx"]
+        face, direction = solved_rollout.inverse_solution[0]
+        solved_message = AssistantMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "native-call",
+                    "name": "rotate",
+                    "arguments": json.dumps({"face": face, "direction": direction}),
+                }
+            ],
+        )
+        await solved_env.env_response([solved_message], solved_state)
+        assert solved_rollout.solved()
+        assert await action_gated_mask_overlap_strict_shaped_direction_reward(solved_state) == 1.0
+
+        invalid_env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=42,
+            reward_style="action_gated_mask_overlap_strict_shaped_direction",
+            prompt_style="stage_solve_action_mask_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        invalid_state = {"task": dict(invalid_env.get_dataset()[0])}
+        await invalid_env.setup_state(invalid_state)
+        assert await action_gated_mask_overlap_strict_shaped_direction_reward(invalid_state) == 0.0
+
+        protocol_state = {"task": dict(invalid_env.get_dataset()[0])}
+        await invalid_env.setup_state(protocol_state)
+        protocol_rollout = protocol_state["megaminx"]
+        face, direction = protocol_rollout.inverse_solution[0]
+        protocol_message = AssistantMessage(
+            content="visible text",
+            tool_calls=[
+                {
+                    "id": "native-call",
+                    "name": "rotate",
+                    "arguments": json.dumps({"face": face, "direction": direction}),
+                }
+            ],
+        )
+        await invalid_env.env_response([protocol_message], protocol_state)
+        assert protocol_rollout.solved()
+        assert await action_gated_mask_overlap_strict_shaped_direction_reward(protocol_state) == 0.0
+
+    asyncio.run(run())
+
+
+def test_stage_frontier_sensor_native_tool_uses_raw_sensors_without_action_masks() -> None:
+    env = load_environment(
+        min_depth=1,
+        max_depth=2,
+        num_examples=2,
+        seed=52,
+        reward_style="action_gated_counterfactual_frontier_strict",
+        prompt_style="stage_frontier_sensor_native_tool",
+        move_budget=1,
+    )
+    rows = [dict(row) for row in env.get_dataset()]
+    assert env.env_args["allow_text_tool_actions"] is False
+    assert {row["scramble_depth"] for row in rows} == {1, 2}
+    for row in rows:
+        prompt = "\n".join(message["content"] for message in row["prompt"])
+        assert "Frontier sensor objective:" in prompt
+        assert "Structured state sensors:" in prompt
+        assert "Candidate-local moved strips:" in prompt
+        assert "Solve-action equality-mask table:" not in prompt
+        assert "Solve-action evidence table:" not in prompt
+        assert "All-candidate solve-direction flow table:" not in prompt
+        assert "expected_current_if_solve" not in prompt
+        assert "expected=" not in prompt
+        assert "cw_mask" not in prompt
+        assert "ccw_mask" not in prompt
+        assert "11111" not in prompt
+        assert row["scramble"] not in prompt
+        assert row["inverse_solution"] not in prompt
+
+    try:
+        load_environment(
+            min_depth=1,
+            max_depth=3,
+            num_examples=3,
+            reward_style="action_gated_counterfactual_frontier_strict",
+            prompt_style="stage_frontier_sensor_native_tool",
+            move_budget=1,
+        )
+    except ValueError as error:
+        assert "only defined for depths 1-2" in str(error)
+    else:
+        raise AssertionError("Expected frontier sensor prompt to reject max_depth > 2")
+
+
+def test_action_gated_counterfactual_frontier_reward_handles_depth1_and_depth2() -> None:
+    async def run() -> None:
+        depth1_env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=42,
+            reward_style="action_gated_counterfactual_frontier_strict",
+            prompt_style="stage_frontier_sensor_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        depth1_state = {"task": dict(depth1_env.get_dataset()[0])}
+        await depth1_env.setup_state(depth1_state)
+        depth1_rollout = depth1_state["megaminx"]
+        face, direction = depth1_rollout.inverse_solution[0]
+        await depth1_env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "rotate",
+                            "arguments": json.dumps({"face": face, "direction": direction}),
+                        }
+                    ],
+                )
+            ],
+            depth1_state,
+        )
+        assert depth1_rollout.solved()
+        assert await action_gated_counterfactual_frontier_strict_reward(depth1_state) == 1.0
+        assert await reward_style(depth1_state) == 10.0
+
+        wrong_env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=42,
+            reward_style="action_gated_counterfactual_frontier_strict",
+            prompt_style="stage_frontier_sensor_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        wrong_state = {"task": dict(wrong_env.get_dataset()[0])}
+        await wrong_env.setup_state(wrong_state)
+        wrong_rollout = wrong_state["megaminx"]
+        face, direction = wrong_rollout.inverse_solution[0]
+        wrong_direction = next(item for item in DIRECTIONS if item != direction)
+        await wrong_env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "rotate",
+                            "arguments": json.dumps(
+                                {"face": face, "direction": wrong_direction}
+                            ),
+                        }
+                    ],
+                )
+            ],
+            wrong_state,
+        )
+        wrong_reward = await action_gated_counterfactual_frontier_strict_reward(wrong_state)
+        assert not wrong_rollout.solved()
+        assert await first_rotate_face_frontier_viable(wrong_state) == 1.0
+        assert await first_rotate_counterfactual_frontier(wrong_state) == 0.0
+        assert 0.0 < wrong_reward < 0.55
+
+        depth2_env = load_environment(
+            min_depth=2,
+            max_depth=2,
+            num_examples=1,
+            seed=77,
+            reward_style="action_gated_counterfactual_frontier_strict",
+            prompt_style="stage_frontier_sensor_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        depth2_state = {"task": dict(depth2_env.get_dataset()[0])}
+        await depth2_env.setup_state(depth2_state)
+        depth2_rollout = depth2_state["megaminx"]
+        face, direction = depth2_rollout.inverse_solution[0]
+        await depth2_env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "rotate",
+                            "arguments": json.dumps({"face": face, "direction": direction}),
+                        }
+                    ],
+                )
+            ],
+            depth2_state,
+        )
+        assert not depth2_rollout.solved()
+        assert await first_rotate_frontier_tail_count(depth2_state) >= 1.0
+        assert await first_rotate_frontier_tail_unique(depth2_state) in {0.0, 1.0}
+        assert await first_rotate_frontier_tail_best_mask_count(depth2_state) >= 1.0
+        assert await first_rotate_counterfactual_frontier(depth2_state) == 1.0
+        assert 0.80 <= await action_gated_counterfactual_frontier_strict_reward(depth2_state) <= 0.95
+
+        protocol_env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=42,
+            reward_style="action_gated_counterfactual_frontier_strict",
+            prompt_style="stage_frontier_sensor_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        protocol_state = {"task": dict(protocol_env.get_dataset()[0])}
+        await protocol_env.setup_state(protocol_state)
+        protocol_rollout = protocol_state["megaminx"]
+        face, direction = protocol_rollout.inverse_solution[0]
+        await protocol_env.env_response(
+            [
+                AssistantMessage(
+                    content="visible text",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "rotate",
+                            "arguments": json.dumps({"face": face, "direction": direction}),
+                        }
+                    ],
+                )
+            ],
+            protocol_state,
+        )
+        assert protocol_rollout.solved()
+        assert await action_gated_counterfactual_frontier_strict_reward(protocol_state) == 0.0
+
+    asyncio.run(run())
+
+
+def test_stage_frontier_sensor_native_tool_refreshes_raw_view_after_first_move() -> None:
+    async def run() -> None:
+        env = load_environment(
+            min_depth=2,
+            max_depth=2,
+            num_examples=1,
+            seed=81,
+            reward_style="action_gated_counterfactual_frontier_strict",
+            prompt_style="stage_frontier_sensor_native_tool",
+            max_turns=4,
+            move_budget=2,
+        )
+        state = {"task": dict(env.get_dataset()[0])}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        face, direction = rollout.inverse_solution[0]
+        response = await env.rotate(face, direction, rollout)
+        assert "Updated frontier sensor view:" in response
+        assert "Candidate-local moved strips:" in response
+        assert "Solve-action equality-mask table:" not in response
+        second_face, second_direction = rollout.inverse_solution[1]
+        await env.rotate(second_face, second_direction, rollout)
+        assert rollout.solved()
+
+    asyncio.run(run())
+
+
+def test_stage_frontier_sensor_compact_native_tool_omits_full_net_and_masks() -> None:
+    env = load_environment(
+        min_depth=2,
+        max_depth=2,
+        num_examples=1,
+        seed=52,
+        reward_style="action_gated_counterfactual_frontier_value_strict",
+        prompt_style="stage_frontier_sensor_compact_native_tool",
+        move_budget=1,
+    )
+    row = dict(env.get_dataset()[0])
+    prompt = "\n".join(message["content"] for message in row["prompt"])
+
+    assert env.env_args["allow_text_tool_actions"] is False
+    assert "Frontier sensor objective:" in prompt
+    assert "Decision rule: for candidate X with ring n0 n1 n2 n3 n4" in prompt
+    assert "Choose an action with the most supported ring positions." in prompt
+    assert "For this frontier task, choose exactly one rotate call; do not inspect or finish." in prompt
+    assert "Structured state sensors:" in prompt
+    assert "Candidate-local moved strips:" in prompt
+    assert "Initial compact observation: use the sensor sections above." in prompt
+    assert "Initial observation:" not in prompt
+    assert "Facelet net:" not in prompt
+    assert "Solve-action equality-mask table:" not in prompt
+    assert "cw_mask" not in prompt
+    assert "ccw_mask" not in prompt
+    assert "expected_current_if_solve" not in prompt
+    assert row["scramble"] not in prompt
+    assert row["inverse_solution"] not in prompt
+
+
+def test_action_gated_counterfactual_frontier_value_reward_is_dense_and_strict() -> None:
+    async def run() -> None:
+        env = load_environment(
+            min_depth=2,
+            max_depth=2,
+            num_examples=1,
+            seed=77,
+            reward_style="action_gated_counterfactual_frontier_value_strict",
+            prompt_style="stage_frontier_sensor_compact_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        state = {"task": dict(env.get_dataset()[0])}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        face, direction = rollout.inverse_solution[0]
+        await env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "rotate",
+                            "arguments": json.dumps({"face": face, "direction": direction}),
+                        }
+                    ],
+                )
+            ],
+            state,
+        )
+
+        assert await reward_style(state) == 11.0
+        assert await first_rotate_counterfactual_frontier(state) == 1.0
+        assert await first_rotate_counterfactual_value(state) == 1.0
+        assert await first_rotate_counterfactual_value_norm(state) >= 0.0
+        assert await first_rotate_counterfactual_value_rank(state) > 0.0
+        assert 0.80 <= await action_gated_counterfactual_frontier_value_strict_reward(state) <= 0.95
+
+        wrong_env = load_environment(
+            min_depth=2,
+            max_depth=2,
+            num_examples=1,
+            seed=77,
+            reward_style="action_gated_counterfactual_frontier_value_strict",
+            prompt_style="stage_frontier_sensor_compact_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        wrong_state = {"task": dict(wrong_env.get_dataset()[0])}
+        await wrong_env.setup_state(wrong_state)
+        wrong_rollout = wrong_state["megaminx"]
+        wrong_face = next(face for face in FACES if face != wrong_rollout.inverse_solution[0][0])
+        await wrong_env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "rotate",
+                            "arguments": json.dumps({"face": wrong_face, "direction": "cw"}),
+                        }
+                    ],
+                )
+            ],
+            wrong_state,
+        )
+        dense_reward = await action_gated_counterfactual_frontier_value_strict_reward(
+            wrong_state
+        )
+        assert 0.0 < dense_reward <= 0.62
+        assert await first_rotate_counterfactual_value_norm(wrong_state) >= 0.0
+
+        protocol_env = load_environment(
+            min_depth=2,
+            max_depth=2,
+            num_examples=1,
+            seed=77,
+            reward_style="action_gated_counterfactual_frontier_value_strict",
+            prompt_style="stage_frontier_sensor_compact_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        protocol_state = {"task": dict(protocol_env.get_dataset()[0])}
+        await protocol_env.setup_state(protocol_state)
+        protocol_rollout = protocol_state["megaminx"]
+        face, direction = protocol_rollout.inverse_solution[0]
+        await protocol_env.env_response(
+            [
+                AssistantMessage(
+                    content="visible text",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "rotate",
+                            "arguments": json.dumps({"face": face, "direction": direction}),
+                        }
+                    ],
+                )
+            ],
+            protocol_state,
+        )
+        assert await action_gated_counterfactual_frontier_value_strict_reward(protocol_state) == 0.0
+
+    asyncio.run(run())
+
+
+def _expected_touching_strips_after(puzzle: MegaminxPuzzle, face: str, direction: str) -> dict[str, str]:
+    after = puzzle.copy()
+    after.apply_move(face, direction)
+    return {
+        neighbor: "".join(
+            after.stickers[position]
+            for position in DEFAULT_TOPOLOGY.side_strip(face, neighbor)
+        )
+        for neighbor in DEFAULT_TOPOLOGY.neighbor_rings[face]
+    }
+
+
+def test_stage_predict_rotate_native_tool_prompt_and_reward() -> None:
+    async def run() -> None:
+        env = load_environment(
+            min_depth=2,
+            max_depth=2,
+            num_examples=1,
+            seed=77,
+            reward_style="action_gated_predict_rotate_value_strict",
+            prompt_style="stage_predict_rotate_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        row = dict(env.get_dataset()[0])
+        prompt = "\n".join(message["content"] for message in row["prompt"])
+        assert "Predict-then-rotate objective:" in prompt
+        assert "predict_rotate(face, direction, predicted_after)" in prompt
+        assert "Action-first instruction: the first assistant turn must be a predict_rotate tool call." in prompt
+        assert "Initial compact observation: use the sensor sections above." in prompt
+        assert "predicted_after must be five three-letter strips" in prompt
+        assert "Do not use rotate, inspect, or finish in this prompt style." in prompt
+        assert "Initial observation:" not in prompt
+        assert "Solve-action equality-mask table:" not in prompt
+        assert row["scramble"] not in prompt
+        assert row["inverse_solution"] not in prompt
+
+        state = {"task": row}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        face, direction = rollout.inverse_solution[0]
+        expected = _expected_touching_strips_after(rollout.initial_puzzle, face, direction)
+        expected_list = [
+            expected[neighbor] for neighbor in DEFAULT_TOPOLOGY.neighbor_rings[face]
+        ]
+        await env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "predict_rotate",
+                            "arguments": json.dumps(
+                                    {
+                                        "face": face,
+                                        "direction": direction,
+                                        "predicted_after": expected_list,
+                                    }
+                            ),
+                        }
+                    ],
+                )
+            ],
+            state,
+        )
+        assert await reward_style(state) == 12.0
+        assert await predict_rotate_call_count(state) == 1.0
+        assert await rotate_call_count(state) == 0.0
+        assert await first_prediction_valid(state) == 1.0
+        assert await first_prediction_exact_strip_count(state) == 5.0
+        assert await first_prediction_strip_accuracy(state) == 1.0
+        assert await first_prediction_char_accuracy(state) == 1.0
+        assert await first_prediction_quality(state) == 1.0
+        assert await first_rotate_counterfactual_frontier(state) == 1.0
+        assert 0.70 <= await action_gated_predict_rotate_value_strict_reward(state) <= 1.0
+
+        bad_state = {"task": row}
+        await env.setup_state(bad_state)
+        bad_rollout = bad_state["megaminx"]
+        await env.env_response(
+            [
+                AssistantMessage(
+                    content="visible text",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "predict_rotate",
+                            "arguments": json.dumps(
+                                    {
+                                        "face": face,
+                                        "direction": direction,
+                                        "predicted_after": expected_list,
+                                    }
+                            ),
+                        }
+                    ],
+                )
+            ],
+            bad_state,
+        )
+        assert bad_rollout.first_rotate == (face, direction)
+        assert await action_gated_predict_rotate_value_strict_reward(bad_state) == 0.0
+
+    asyncio.run(run())
+
+
+def test_predict_rotate_rejects_malformed_predictions_without_rotating() -> None:
+    async def run() -> None:
+        env = load_environment(
+            min_depth=2,
+            max_depth=2,
+            num_examples=1,
+            seed=78,
+            reward_style="action_gated_predict_rotate_value_strict",
+            prompt_style="stage_predict_rotate_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        row = dict(env.get_dataset()[0])
+
+        malformed_cases = [
+            [],
+            ["AAA"],
+            ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"],
+            ["AA", "BBB", "CCC", "DDD", "EEE"],
+            ["AAA", "BBB", "CCC", "DDD", "ZZZ"],
+            ["AAA", "BBB", "CCC", "DDD", 3],
+            "AAA BBB CCC DDD EEE",
+        ]
+        for predicted_after in malformed_cases:
+            state = {"task": row}
+            await env.setup_state(state)
+            rollout = state["megaminx"]
+            face, direction = rollout.inverse_solution[0]
+            response = await env.env_response(
+                [
+                    AssistantMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": "native-call",
+                                "name": "predict_rotate",
+                                "arguments": json.dumps(
+                                    {
+                                        "face": face,
+                                        "direction": direction,
+                                        "predicted_after": predicted_after,
+                                    }
+                                ),
+                            }
+                        ],
+                    )
+                ],
+                state,
+            )
+            assert response[0].role == "tool"
+            assert "Illegal prediction" in response[0].content
+            assert rollout.illegal_moves == 1
+            assert rollout.move_count == 0
+            assert rollout.first_rotate is None
+            assert rollout.first_prediction is None
+            assert await first_prediction_valid(state) == 0.0
+            assert await action_gated_predict_rotate_value_strict_reward(state) == 0.0
+
+        state = {"task": row}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        face, direction = rollout.inverse_solution[0]
+        wrong_but_valid = ["AAA", "BBB", "CCC", "DDD", "EEE"]
+        await env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "predict_rotate",
+                            "arguments": json.dumps(
+                                {
+                                    "face": face,
+                                    "direction": direction,
+                                    "predicted_after": wrong_but_valid,
+                                }
+                            ),
+                        }
+                    ],
+                )
+            ],
+            state,
+        )
+        assert rollout.move_count == 1
+        assert await first_prediction_valid(state) == 1.0
+        assert await first_prediction_item_count(state) == 5.0
+        assert await first_prediction_extra_count(state) == 0.0
+        assert await action_gated_predict_rotate_value_strict_reward(state) < 0.80
+
+    asyncio.run(run())
+
+
+def test_stage_predict_transition_native_tool_rewards_transition_accuracy() -> None:
+    async def run() -> None:
+        env = load_environment(
+            min_depth=2,
+            max_depth=2,
+            num_examples=1,
+            seed=79,
+            reward_style="action_gated_predict_rotate_transition",
+            prompt_style="stage_predict_transition_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        row = dict(env.get_dataset()[0])
+        prompt = "\n".join(message["content"] for message in row["prompt"])
+        assert "Transition-prediction objective:" in prompt
+        assert "physics transition curriculum" in prompt
+        assert "hidden frontier progress" not in prompt
+        assert "Goal: choose one legal face turn and predict" in prompt
+        assert "Initial observation:" not in prompt
+        assert row["scramble"] not in prompt
+        assert row["inverse_solution"] not in prompt
+
+        state = {"task": row}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        face, direction = rollout.scramble[0]
+        expected = _expected_touching_strips_after(rollout.initial_puzzle, face, direction)
+        expected_list = [
+            expected[neighbor] for neighbor in DEFAULT_TOPOLOGY.neighbor_rings[face]
+        ]
+        await env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "predict_rotate",
+                            "arguments": json.dumps(
+                                {
+                                    "face": face,
+                                    "direction": direction,
+                                    "predicted_after": expected_list,
+                                }
+                            ),
+                        }
+                    ],
+                )
+            ],
+            state,
+        )
+        assert await reward_style(state) == 13.0
+        assert await first_prediction_quality(state) == 1.0
+        assert await action_gated_predict_rotate_transition_reward(state) == 1.0
+
+        wrong_state = {"task": row}
+        await env.setup_state(wrong_state)
+        await env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "predict_rotate",
+                            "arguments": json.dumps(
+                                {
+                                    "face": face,
+                                    "direction": direction,
+                                    "predicted_after": ["AAA", "BBB", "CCC", "DDD", "EEE"],
+                                }
+                            ),
+                        }
+                    ],
+                )
+            ],
+            wrong_state,
+        )
+        assert 0.0 <= await action_gated_predict_rotate_transition_reward(wrong_state) < 1.0
+
+    asyncio.run(run())
+
+
+def test_stage_face_discovery_native_tool_rewards_face_selection() -> None:
+    async def run() -> None:
+        env = load_environment(
+            min_depth=1,
+            max_depth=1,
+            num_examples=1,
+            seed=80,
+            reward_style="action_gated_face_discovery",
+            prompt_style="stage_face_discovery_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        row = dict(env.get_dataset()[0])
+        prompt = "\n".join(message["content"] for message in row["prompt"])
+        assert "Face-discovery objective:" in prompt
+        assert "Goal: identify the face whose rotation" in prompt
+        assert "Action-first instruction: the first assistant turn must be a rotate tool call." in prompt
+        assert "Initial observation:" not in prompt
+        assert "Solve-action equality-mask table:" not in prompt
+        assert row["scramble"] not in prompt
+        assert row["inverse_solution"] not in prompt
+
+        state = {"task": row}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        face, correct_direction = rollout.inverse_solution[0]
+        wrong_direction = "ccw" if correct_direction == "cw" else "cw"
+        await env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "rotate",
+                            "arguments": json.dumps(
+                                {"face": face, "direction": wrong_direction}
+                            ),
+                        }
+                    ],
+                )
+            ],
+            state,
+        )
+        assert await reward_style(state) == 14.0
+        assert await first_rotate_face_correct(state) == 1.0
+        assert await first_rotate_direction_correct(state) == 0.0
+        assert await action_gated_face_discovery_reward(state) == 1.0
+
+        wrong_state = {"task": row}
+        await env.setup_state(wrong_state)
+        wrong_face = next(candidate for candidate in FACES if candidate != face)
+        await env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "rotate",
+                            "arguments": json.dumps(
+                                {"face": wrong_face, "direction": correct_direction}
+                            ),
+                        }
+                    ],
+                )
+            ],
+            wrong_state,
+        )
+        assert await action_gated_face_discovery_reward(wrong_state) < 1.0
+
+    asyncio.run(run())
+
+
+def test_stage_face_tournament_native_tool_constrains_candidate_set() -> None:
+    async def run() -> None:
+        env = load_environment(
+            min_depth=2,
+            max_depth=2,
+            num_examples=1,
+            seed=81,
+            reward_style="action_gated_face_tournament",
+            prompt_style="stage_face_tournament_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        row = dict(env.get_dataset()[0])
+        prompt = "\n".join(message["content"] for message in row["prompt"])
+        candidate_faces = row["candidate_faces"]
+        assert len(candidate_faces) == 4
+        assert len(set(candidate_faces)) == 4
+        target_face = json.loads(row["inverse_solution"])[0]["face"]
+        assert target_face in candidate_faces
+        assert "Candidate faces: " + " ".join(candidate_faces) in prompt
+        assert "other faces receive zero reward" in prompt
+        assert "Initial observation:" not in prompt
+        assert row["scramble"] not in prompt
+        assert row["inverse_solution"] not in prompt
+
+        state = {"task": row}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        target_face, target_direction = rollout.inverse_solution[0]
+        wrong_direction = "ccw" if target_direction == "cw" else "cw"
+        await env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "rotate",
+                            "arguments": json.dumps(
+                                {"face": target_face, "direction": wrong_direction}
+                            ),
+                        }
+                    ],
+                )
+            ],
+            state,
+        )
+        assert await reward_style(state) == 15.0
+        assert await first_rotate_in_candidate_set(state) == 1.0
+        assert await first_rotate_face_correct(state) == 1.0
+        assert await action_gated_face_tournament_reward(state) == 1.0
+
+        outside_state = {"task": row}
+        await env.setup_state(outside_state)
+        outside_face = next(face for face in FACES if face not in candidate_faces)
+        await env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "rotate",
+                            "arguments": json.dumps(
+                                {"face": outside_face, "direction": target_direction}
+                            ),
+                        }
+                    ],
+                )
+            ],
+            outside_state,
+        )
+        assert await first_rotate_in_candidate_set(outside_state) == 0.0
+        assert await action_gated_face_tournament_reward(outside_state) == 0.0
+
+    asyncio.run(run())
+
+
+def test_stage_candidate_tournament_native_tool_selects_by_slot() -> None:
+    async def run() -> None:
+        env = load_environment(
+            min_depth=2,
+            max_depth=2,
+            num_examples=1,
+            seed=82,
+            reward_style="action_gated_candidate_tournament",
+            prompt_style="stage_candidate_tournament_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        row = dict(env.get_dataset()[0])
+        prompt = "\n".join(message["content"] for message in row["prompt"])
+        candidate_faces = row["candidate_faces"]
+        assert len(candidate_faces) == 4
+        assert len(set(candidate_faces)) == 4
+        target_face = json.loads(row["inverse_solution"])[0]["face"]
+        target_direction = json.loads(row["inverse_solution"])[0]["direction"]
+        target_index = candidate_faces.index(target_face) + 1
+        assert target_face in candidate_faces
+        assert "select_candidate" in prompt
+        assert "Legal action: select one printed candidate slot 1-4" in prompt
+        assert "Legal moves: rotate any face" not in prompt
+        assert "Candidate faces:" not in prompt
+        for index, face in enumerate(candidate_faces, start=1):
+            assert f"Candidate {index}: {face}" in prompt
+        assert "Call select_candidate exactly once" in prompt
+        assert "Call rotate exactly once" not in prompt
+        assert "Initial observation:" not in prompt
+        assert row["scramble"] not in prompt
+        assert row["inverse_solution"] not in prompt
+        assert [tool.name for tool in env.tool_defs] == ["select_candidate"]
+        assert "select_candidate tool call" in env.system_prompt
+        assert "Do not call rotate" in env.system_prompt
+
+        state = {"task": row}
+        await env.setup_state(state)
+        wrong_direction = "ccw" if target_direction == "cw" else "cw"
+        await env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "select_candidate",
+                            "arguments": json.dumps(
+                                {"index": target_index, "direction": wrong_direction}
+                            ),
+                        }
+                    ],
+                )
+            ],
+            state,
+        )
+        assert await reward_style(state) == 16.0
+        assert await candidate_select_call_count(state) == 1.0
+        assert await rotate_call_count(state) == 0.0
+        assert await first_candidate_index(state) == float(target_index)
+        assert await first_rotate_in_candidate_set(state) == 1.0
+        assert await first_rotate_face_correct(state) == 1.0
+        assert await action_gated_candidate_tournament_reward(state) == 1.0
+
+        outside_state = {"task": row}
+        await env.setup_state(outside_state)
+        await env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "select_candidate",
+                            "arguments": json.dumps(
+                                {"index": 5, "direction": target_direction}
+                            ),
+                        }
+                    ],
+                )
+            ],
+            outside_state,
+        )
+        assert await candidate_select_call_count(outside_state) == 1.0
+        assert await first_candidate_index(outside_state) == -1.0
+        assert await action_gated_candidate_tournament_reward(outside_state) == 0.0
+
+        wrong_state = {"task": row}
+        await env.setup_state(wrong_state)
+        wrong_index = next(
+            index
+            for index, face in enumerate(candidate_faces, start=1)
+            if face != target_face
+        )
+        await env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "select_candidate",
+                            "arguments": json.dumps(
+                                {"index": wrong_index, "direction": target_direction}
+                            ),
+                        }
+                    ],
+                )
+            ],
+            wrong_state,
+        )
+        assert await first_rotate_face_correct(wrong_state) == 0.0
+        assert 0.0 <= await action_gated_candidate_tournament_reward(wrong_state) < 1.0
+
+    asyncio.run(run())
+
+
+def test_stage_candidate_index_native_tool_selects_by_slot_without_direction() -> None:
+    async def run() -> None:
+        env = load_environment(
+            min_depth=2,
+            max_depth=2,
+            num_examples=1,
+            seed=85,
+            reward_style="action_gated_candidate_index",
+            prompt_style="stage_candidate_index_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        row = dict(env.get_dataset()[0])
+        prompt = "\n".join(message["content"] for message in row["prompt"])
+        candidate_faces = row["candidate_faces"]
+        assert len(candidate_faces) == 4
+        assert len(set(candidate_faces)) == 4
+        target_face = json.loads(row["inverse_solution"])[0]["face"]
+        target_index = candidate_faces.index(target_face) + 1
+        assert "select_candidate_index" in prompt
+        assert "select_candidate(index, direction)" not in prompt
+        assert "direction" not in prompt
+        assert "cw" not in prompt
+        assert "ccw" not in prompt
+        assert "rotate" not in prompt
+        assert "Legal action: select one printed candidate slot 1-4." in prompt
+        assert "Candidate faces:" not in prompt
+        for index, face in enumerate(candidate_faces, start=1):
+            assert f"Candidate {index}: {face}" in prompt
+        assert "Call select_candidate_index exactly once" in prompt
+        assert "Initial observation:" not in prompt
+        assert [tool.name for tool in env.tool_defs] == ["select_candidate_index"]
+        assert "select_candidate_index tool call" in env.system_prompt
+        assert "rotate" not in env.system_prompt
+
+        state = {"task": row}
+        await env.setup_state(state)
+        await env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "select_candidate_index",
+                            "arguments": json.dumps({"index": target_index}),
+                        }
+                    ],
+                )
+            ],
+            state,
+        )
+        assert await reward_style(state) == 17.0
+        assert await candidate_select_call_count(state) == 1.0
+        assert await action_taken(state) == 0.0
+        assert await first_candidate_index(state) == float(target_index)
+        assert await first_rotate_in_candidate_set(state) == 0.0
+        assert await first_rotate_face_correct(state) == 0.0
+        assert await first_candidate_face_correct(state) == 1.0
+        assert await action_gated_candidate_index_reward(state) == 1.0
+
+        invalid_state = {"task": row}
+        await env.setup_state(invalid_state)
+        await env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "select_candidate_index",
+                            "arguments": json.dumps({"index": 5}),
+                        }
+                    ],
+                )
+            ],
+            invalid_state,
+        )
+        assert await candidate_select_call_count(invalid_state) == 1.0
+        assert await first_candidate_index(invalid_state) == -1.0
+        assert await action_gated_candidate_index_reward(invalid_state) == 0.0
+
+        wrong_state = {"task": row}
+        await env.setup_state(wrong_state)
+        wrong_index = next(
+            index
+            for index, face in enumerate(candidate_faces, start=1)
+            if face != target_face
+        )
+        await env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "select_candidate_index",
+                            "arguments": json.dumps({"index": wrong_index}),
+                        }
+                    ],
+                )
+            ],
+            wrong_state,
+        )
+        assert await first_candidate_face_correct(wrong_state) == 0.0
+        assert await action_gated_candidate_index_reward(wrong_state) == 0.0
+
+    asyncio.run(run())
+
+
+def test_stage_candidate_tournament_depth1_prompt_has_no_rotate_hint() -> None:
+    env = load_environment(
+        split="depth1",
+        num_examples=1,
+        seed=83,
+        reward_style="action_gated_candidate_tournament",
+        prompt_style="stage_candidate_tournament_native_tool",
+        max_turns=2,
+        move_budget=1,
+    )
+    row = dict(env.get_dataset()[0])
+    prompt = "\n".join(message["content"] for message in row["prompt"])
+
+    assert "select_candidate call" in prompt
+    assert "rotate action" not in prompt
+    assert "Legal moves: rotate any face" not in prompt
+    assert "For this candidate-tournament task" in prompt
+
+
+def test_stage_candidate_scorecard_native_tool_lists_slot_features_without_answer() -> None:
+    env = load_environment(
+        min_depth=2,
+        max_depth=2,
+        num_examples=1,
+        seed=86,
+        reward_style="action_gated_candidate_tournament",
+        prompt_style="stage_candidate_scorecard_native_tool",
+        max_turns=2,
+        move_budget=1,
+    )
+    row = dict(env.get_dataset()[0])
+    prompt = "\n".join(message["content"] for message in row["prompt"])
+    candidate_faces = row["candidate_faces"]
+
+    assert [tool.name for tool in env.tool_defs] == ["select_candidate"]
+    assert "Candidate scorecard:" in prompt
+    assert "slot | face | support | affected_neighbors | frontier | cw_mask | ccw_mask" in prompt
+    for slot, face in enumerate(candidate_faces, start=1):
+        assert f"{slot} | {face} | " in prompt
+        assert f"Candidate {slot}: {face}" in prompt
+    assert row["scramble"] not in prompt
+    assert row["inverse_solution"] not in prompt
+    assert row["answer"] not in prompt
+    forbidden = ("winner", "correct_face", "best_face", "answer_face")
+    assert all(word not in prompt.lower() for word in forbidden)
+
+
+def test_stage_candidate_scorecard_no_frontier_omits_frontier_feature() -> None:
+    env = load_environment(
+        min_depth=2,
+        max_depth=2,
+        num_examples=1,
+        seed=87,
+        reward_style="action_gated_candidate_tournament",
+        prompt_style="stage_candidate_scorecard_no_frontier_native_tool",
+        max_turns=2,
+        move_budget=1,
+    )
+    row = dict(env.get_dataset()[0])
+    prompt = "\n".join(message["content"] for message in row["prompt"])
+    candidate_faces = row["candidate_faces"]
+
+    assert [tool.name for tool in env.tool_defs] == ["select_candidate"]
+    assert "Candidate scorecard:" in prompt
+    assert "slot | face | support | affected_neighbors | cw_mask | ccw_mask" in prompt
+    assert "frontier" not in prompt.lower()
+    for slot, face in enumerate(candidate_faces, start=1):
+        assert f"{slot} | {face} | " in prompt
+        assert f"Candidate {slot}: {face}" in prompt
+    assert row["scramble"] not in prompt
+    assert row["inverse_solution"] not in prompt
+
+
+def test_stage_candidate_scorecard_mask_omits_support_and_frontier_features() -> None:
+    env = load_environment(
+        min_depth=2,
+        max_depth=2,
+        num_examples=1,
+        seed=88,
+        reward_style="action_gated_candidate_tournament",
+        prompt_style="stage_candidate_scorecard_mask_native_tool",
+        max_turns=2,
+        move_budget=1,
+    )
+    row = dict(env.get_dataset()[0])
+    prompt = "\n".join(message["content"] for message in row["prompt"])
+    candidate_faces = row["candidate_faces"]
+
+    assert [tool.name for tool in env.tool_defs] == ["select_candidate"]
+    assert "Candidate scorecard:" in prompt
+    assert "slot | face | affected_neighbors | cw_mask | ccw_mask" in prompt
+    assert "support" not in prompt.lower()
+    assert "frontier" not in prompt.lower()
+    for slot, face in enumerate(candidate_faces, start=1):
+        assert f"{slot} | {face} | " in prompt
+        assert f"Candidate {slot}: {face}" in prompt
+    assert row["scramble"] not in prompt
+    assert row["inverse_solution"] not in prompt
+
+
+def test_stage_candidate_scorecard_mask_index_native_tool_uses_same_masks_with_index_tool() -> None:
+    env = load_environment(
+        min_depth=2,
+        max_depth=2,
+        num_examples=1,
+        seed=89,
+        reward_style="action_gated_candidate_mask_index_rank",
+        prompt_style="stage_candidate_scorecard_mask_index_native_tool",
+        max_turns=2,
+        move_budget=1,
+    )
+    row = dict(env.get_dataset()[0])
+    prompt = "\n".join(message["content"] for message in row["prompt"])
+    candidate_faces = row["candidate_faces"]
+
+    assert [tool.name for tool in env.tool_defs] == ["select_candidate_index"]
+    assert "select_candidate_index tool call" in env.system_prompt
+    assert "select_candidate tool call" not in env.system_prompt
+    assert "Candidate scorecard:" in prompt
+    assert "slot | face | affected_neighbors | cw_mask | ccw_mask" in prompt
+    assert "support" not in prompt.lower()
+    assert "frontier" not in prompt.lower()
+    assert "Legal action: select one printed candidate slot 1-4." in prompt
+    assert "Use select_candidate_index(index)." in prompt
+    assert "Use select_candidate(index, direction)" not in prompt
+    assert "Initial compact observation: use the sensor sections above." in prompt
+    assert "Initial observation:" not in prompt
+    for slot, face in enumerate(candidate_faces, start=1):
+        assert f"{slot} | {face} | " in prompt
+        assert f"Candidate {slot}: {face}" in prompt
+    assert row["scramble"] not in prompt
+    assert row["inverse_solution"] not in prompt
+    assert row["answer"] not in prompt
+
+
+def test_stage_candidate_scorecard_mask_frontier_equivalence_uses_same_public_columns() -> None:
+    env = load_environment(
+        min_depth=2,
+        max_depth=2,
+        num_examples=1,
+        seed=90,
+        reward_style="action_gated_candidate_mask_frontier_equivalence",
+        prompt_style="stage_candidate_scorecard_mask_frontier_equivalence_native_tool",
+        max_turns=2,
+        move_budget=1,
+    )
+    row = dict(env.get_dataset()[0])
+    prompt = "\n".join(message["content"] for message in row["prompt"])
+    candidate_faces = row["candidate_faces"]
+
+    assert [tool.name for tool in env.tool_defs] == ["select_candidate"]
+    assert "select_candidate tool call" in env.system_prompt
+    assert "Candidate scorecard:" in prompt
+    assert "slot | face | affected_neighbors | cw_mask | ccw_mask" in prompt
+    assert "support" not in prompt.lower()
+    assert "frontier" not in prompt.lower()
+    assert "leaves a one-turn solve" in prompt
+    assert "Use select_candidate(index, direction)." in prompt
+    assert "Initial compact observation: use the sensor sections above." in prompt
+    for slot, face in enumerate(candidate_faces, start=1):
+        assert f"{slot} | {face} | " in prompt
+        assert f"Candidate {slot}: {face}" in prompt
+    assert row["scramble"] not in prompt
+    assert row["inverse_solution"] not in prompt
+    assert row["answer"] not in prompt
+
+
+def test_stage_candidate_geometry_frontier_hides_public_reward_proxy() -> None:
+    env = load_environment(
+        min_depth=2,
+        max_depth=2,
+        num_examples=1,
+        seed=91,
+        reward_style="action_gated_candidate_geometry_frontier",
+        prompt_style="stage_candidate_geometry_frontier_native_tool",
+        max_turns=2,
+        move_budget=1,
+    )
+    row = dict(env.get_dataset()[0])
+    prompt = "\n".join(message["content"] for message in row["prompt"])
+    candidate_faces = row["candidate_faces"]
+    puzzle = MegaminxPuzzle.solved(DEFAULT_TOPOLOGY)
+    puzzle.apply_moves(
+        [(item["face"], item["direction"]) for item in json.loads(row["scramble"])]
+    )
+    affected = {
+        face
+        for face in FACES
+        if any(puzzle.stickers[(face, position)] != face for position in range(1, 11))
+    }
+    mask_counts = _action_mask_counts(puzzle)
+    expected_top_faces = sorted(
+        FACES,
+        key=lambda face: (
+            -len(set(DEFAULT_TOPOLOGY.neighbor_rings[face]) & affected),
+            -sum(
+                puzzle.stickers[position] != neighbor
+                for neighbor in DEFAULT_TOPOLOGY.neighbor_rings[face]
+                for side in [DEFAULT_TOPOLOGY.neighbor_rings[neighbor].index(face)]
+                for position in (
+                    (neighbor, 1 + ((side - 1) % 5)),
+                    (neighbor, 6 + side),
+                    (neighbor, 1 + side),
+                )
+            ),
+            -max(mask_counts[(face, direction)] for direction in DIRECTIONS),
+            FACES.index(face),
+        ),
+    )[:4]
+
+    assert [tool.name for tool in env.tool_defs] == ["select_candidate"]
+    assert "select_candidate tool call" in env.system_prompt
+    assert "Candidate scorecard:" not in prompt
+    assert "cw_mask" not in prompt
+    assert "ccw_mask" not in prompt
+    assert "support" not in prompt.lower()
+    assert "frontier" not in prompt.lower()
+    assert "leaves a one-turn solve" in prompt
+    assert "Candidate-local moved strips:" in prompt
+    assert "Initial compact observation: use the sensor sections above." in prompt
+    assert set(candidate_faces) == set(expected_top_faces)
+    for slot, face in enumerate(candidate_faces, start=1):
+        assert f"Candidate {slot}: {face}" in prompt
+    assert row["scramble"] not in prompt
+    assert row["inverse_solution"] not in prompt
+    assert row["answer"] not in prompt
+
+
+def test_stage_candidate_relative_flow_frontier_uses_visible_coordinate_transform() -> None:
+    env = load_environment(
+        min_depth=1,
+        max_depth=2,
+        num_examples=1,
+        seed=94,
+        reward_style="action_gated_candidate_geometry_frontier",
+        prompt_style="stage_candidate_relative_flow_frontier_native_tool",
+        max_turns=2,
+        move_budget=1,
+    )
+    row = dict(env.get_dataset()[0])
+    prompt = "\n".join(message["content"] for message in row["prompt"])
+    candidate_faces = row["candidate_faces"]
+    section = prompt.split("Candidate relative-flow table:", 1)[1].split(
+        "Initial compact observation:", 1
+    )[0]
+
+    assert [tool.name for tool in env.tool_defs] == ["select_candidate"]
+    assert "select_candidate tool call" in env.system_prompt
+    assert "Candidate relative-flow table:" in prompt
+    assert "Candidate-local moved strips:" not in prompt
+    assert "Candidate scorecard:" not in prompt
+    assert "cw_mask" not in prompt
+    assert "ccw_mask" not in prompt
+    for forbidden in ("answer", "winner", "best", "score", "mask", "support", "frontier", "target"):
+        assert forbidden not in section.lower()
+    for slot, face in enumerate(candidate_faces, start=1):
+        assert f"Candidate {slot}: {face}" in prompt
+        assert f"{slot} | {face} |" in section
+    assert row["scramble"] not in prompt
+    assert row["inverse_solution"] not in prompt
+    assert row["answer"] not in prompt
+
+
+def test_stage_candidate_relative_flow_rule_prompt_is_fair_counting_instruction() -> None:
+    env = load_environment(
+        min_depth=1,
+        max_depth=2,
+        num_examples=1,
+        seed=97,
+        reward_style="action_gated_candidate_strict_frontier",
+        prompt_style="stage_candidate_relative_flow_rule_frontier_native_tool",
+        max_turns=2,
+        move_budget=1,
+    )
+    row = dict(env.get_dataset()[0])
+    prompt = "\n".join(message["content"] for message in row["prompt"])
+    section = prompt.split("Relative-flow counting rule:", 1)[1].split(
+        "Initial compact observation:", 1
+    )[0]
+
+    assert [tool.name for tool in env.tool_defs] == ["select_candidate"]
+    assert "Relative-flow counting rule:" in prompt
+    assert "count how many tokens have delta +1" in section
+    assert "largest +1 count" in section
+    assert "Candidate relative-flow table:" in section
+    assert "Candidate-local moved strips:" not in prompt
+    assert "Candidate scorecard:" not in prompt
+    for forbidden in ("answer", "winner", "best", "score", "mask", "support", "frontier", "target"):
+        assert forbidden not in section.lower()
+    assert row["scramble"] not in prompt
+    assert row["inverse_solution"] not in prompt
+    assert row["answer"] not in prompt
+
+
+def test_candidate_relative_flow_oracle_unique_on_depth1_moves() -> None:
+    async def run() -> None:
+        for prompt_style in (
+            "stage_candidate_relative_flow_frontier_native_tool",
+            "stage_candidate_relative_flow_rule_frontier_native_tool",
+        ):
+            env = load_environment(
+                split="depth1",
+                num_examples=24,
+                seed=95,
+                reward_style="action_gated_candidate_geometry_frontier",
+                prompt_style=prompt_style,
+                max_turns=2,
+                move_budget=1,
+            )
+            target_indices: Counter[int] = Counter()
+            for raw_row in env.get_dataset():
+                row = dict(raw_row)
+                state = {"task": row}
+                await env.setup_state(state)
+                rollout = state["megaminx"]
+                target_face, target_direction = rollout.inverse_solution[0]
+                target_index = row["candidate_faces"].index(target_face) + 1
+                target_indices[target_index] += 1
+
+                assert await target_face_in_candidate_set(state) == 1.0
+                assert await target_candidate_index(state) == float(target_index)
+                assert await candidate_relative_flow_oracle_unique(state) == 1.0
+
+                await env.env_response(
+                    [
+                        AssistantMessage(
+                            content="",
+                            tool_calls=[
+                                {
+                                    "id": "native-call",
+                                    "name": "select_candidate",
+                                    "arguments": json.dumps(
+                                        {"index": target_index, "direction": target_direction}
+                                    ),
+                                }
+                            ],
+                        )
+                    ],
+                    state,
+                )
+                assert rollout.solved()
+                assert await first_candidate_relative_flow_count(state) == 5.0
+                assert await first_candidate_relative_flow_margin(state) == 5.0
+                assert await first_candidate_relative_flow_is_candidate_max(state) == 1.0
+                assert await action_gated_candidate_geometry_frontier_reward(state) == 1.0
+
+            assert set(target_indices) == {1, 2, 3, 4}
+
+    asyncio.run(run())
+
+
+def test_action_gated_candidate_strict_frontier_limits_constant_policy_shortcut() -> None:
+    async def run() -> None:
+        env = load_environment(
+            split="train_candidate_relative_flow_rule_frontier_depth12",
+            min_depth=1,
+            max_depth=2,
+            num_examples=96,
+            seed=96,
+            reward_style="action_gated_candidate_strict_frontier",
+            prompt_style="stage_candidate_relative_flow_rule_frontier_native_tool",
+            max_turns=2,
+            move_budget=1,
+            allow_text_tool_actions=False,
+        )
+        constant_rewards: dict[tuple[int, str], list[float]] = {
+            (slot, direction): [] for slot in range(1, 5) for direction in DIRECTIONS
+        }
+        oracle_rewards = []
+        for raw_row in env.get_dataset():
+            row = dict(raw_row)
+            for slot, direction in constant_rewards:
+                constant_state = {"task": row}
+                await env.setup_state(constant_state)
+                await env.env_response(
+                    [
+                        AssistantMessage(
+                            content="",
+                            tool_calls=[
+                                {
+                                    "id": "constant-call",
+                                    "name": "select_candidate",
+                                    "arguments": json.dumps(
+                                        {"index": slot, "direction": direction}
+                                    ),
+                                }
+                            ],
+                        )
+                    ],
+                    constant_state,
+                )
+                constant_rewards[(slot, direction)].append(
+                    await action_gated_candidate_strict_frontier_reward(constant_state)
+                )
+
+            oracle_state = {"task": row}
+            await env.setup_state(oracle_state)
+            rollout = oracle_state["megaminx"]
+            target_face, target_direction = rollout.inverse_solution[0]
+            target_index = row["candidate_faces"].index(target_face) + 1
+            await env.env_response(
+                [
+                    AssistantMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": "oracle-call",
+                                "name": "select_candidate",
+                                "arguments": json.dumps(
+                                    {"index": target_index, "direction": target_direction}
+                                ),
+                            }
+                        ],
+                    )
+                ],
+                oracle_state,
+            )
+            oracle_rewards.append(await action_gated_candidate_strict_frontier_reward(oracle_state))
+
+        constant_means = [
+            sum(rewards) / len(rewards) for rewards in constant_rewards.values()
+        ]
+        assert max(constant_means) < 0.20
+        assert sum(oracle_rewards) / len(oracle_rewards) > 0.85
+        assert await reward_style(oracle_state) == 21.0
+
+    asyncio.run(run())
+
+
+def test_printed_relative_flow_rule_policy_beats_constant_shortcuts() -> None:
+    async def run() -> None:
+        env = load_environment(
+            split="train_candidate_relative_flow_rule_frontier_depth12",
+            min_depth=1,
+            max_depth=2,
+            num_examples=96,
+            seed=96,
+            reward_style="action_gated_candidate_strict_frontier",
+            prompt_style="stage_candidate_relative_flow_rule_frontier_native_tool",
+            max_turns=2,
+            move_budget=1,
+            allow_text_tool_actions=False,
+        )
+        rewards = []
+        unique_rewards = []
+        for raw_row in env.get_dataset():
+            row = dict(raw_row)
+            prompt = "\n".join(message["content"] for message in row["prompt"])
+            slot, direction = relative_flow_rule_action_from_prompt(prompt)
+
+            state = {"task": row}
+            await env.setup_state(state)
+            unique = await candidate_relative_flow_oracle_unique(state) == 1.0
+            await env.env_response(
+                [
+                    AssistantMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": "rule-call",
+                                "name": "select_candidate",
+                                "arguments": json.dumps(
+                                    {"index": slot, "direction": direction}
+                                ),
+                            }
+                        ],
+                    )
+                ],
+                state,
+            )
+            reward = await action_gated_candidate_strict_frontier_reward(state)
+            rewards.append(reward)
+            if unique:
+                unique_rewards.append(reward)
+
+        assert len(unique_rewards) > len(rewards) * 0.6
+        assert sum(rewards) / len(rewards) > 0.80
+        assert min(unique_rewards) >= 0.75
+        assert sum(unique_rewards) / len(unique_rewards) > 0.90
+
+    asyncio.run(run())
+
+
+def test_candidate_relative_flow_rule_solve2_refreshes_candidates_and_solves_depth2() -> None:
+    async def run() -> None:
+        env = load_environment(
+            split="train_candidate_relative_flow_rule_solve2_depth2",
+            min_depth=2,
+            max_depth=2,
+            num_examples=24,
+            seed=104,
+            reward_style="action_gated_candidate_path_solve",
+            prompt_style="stage_candidate_relative_flow_rule_solve2_native_tool",
+            max_turns=4,
+            move_budget=2,
+            allow_text_tool_actions=False,
+        )
+        row = dict(env.get_dataset()[0])
+        prompt = "\n".join(message["content"] for message in row["prompt"])
+        assert [tool.name for tool in env.tool_defs] == ["select_candidate"]
+        assert "candidate-path task" in env.system_prompt
+        assert "refreshed candidate table" in prompt
+        assert "Call select_candidate exactly once" not in prompt
+        assert row["scramble"] not in prompt
+        assert row["inverse_solution"] not in prompt
+        assert row["answer"] not in prompt
+
+        for raw_row in env.get_dataset():
+            row = dict(raw_row)
+            state = {"task": row}
+            await env.setup_state(state)
+            rollout = state["megaminx"]
+            first_face, first_direction = rollout.inverse_solution[0]
+            first_index = row["candidate_faces"].index(first_face) + 1
+
+            first_response = await env.env_response(
+                [
+                    AssistantMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": "first-call",
+                                "name": "select_candidate",
+                                "arguments": json.dumps(
+                                    {"index": first_index, "direction": first_direction}
+                                ),
+                            }
+                        ],
+                    )
+                ],
+                state,
+            )
+            assert "Updated candidate relative-flow view" in first_response[0].content
+            assert await inverse_prefix_length(state) == 1.0
+            assert await action_reaches_one_turn_frontier(state) == 1.0
+            assert await action_gated_candidate_path_solve_reward(state) == 0.70
+
+            second_face, second_direction = rollout.inverse_solution[1]
+            assert second_face in rollout.candidate_faces
+            second_index = rollout.candidate_faces.index(second_face) + 1
+            await env.env_response(
+                [
+                    AssistantMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": "second-call",
+                                "name": "select_candidate",
+                                "arguments": json.dumps(
+                                    {"index": second_index, "direction": second_direction}
+                                ),
+                            }
+                        ],
+                    )
+                ],
+                state,
+            )
+            assert rollout.solved()
+            assert rollout.move_history == rollout.inverse_solution
+            assert await second_rotate_correct(state) == 1.0
+            assert await second_rotate_face_correct(state) == 1.0
+            assert await second_rotate_direction_correct(state) == 1.0
+            assert await inverse_prefix_length(state) == 2.0
+            assert await action_gated_candidate_path_solve_reward(state) == 1.0
+            assert await reward_style(state) == 22.0
+
+    asyncio.run(run())
+
+
+def test_target_face_in_candidate_set_metric_for_geometry_frontier() -> None:
+    async def run() -> None:
+        env = load_environment(
+            min_depth=1,
+            max_depth=2,
+            num_examples=24,
+            seed=92,
+            reward_style="action_gated_candidate_geometry_frontier",
+            prompt_style="stage_candidate_geometry_frontier_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        values = []
+        for raw_row in env.get_dataset():
+            state = {"task": dict(raw_row)}
+            await env.setup_state(state)
+            rollout = state["megaminx"]
+            expected = rollout.inverse_solution[0][0] in state["task"]["candidate_faces"]
+            value = await target_face_in_candidate_set(state)
+            assert value == float(expected)
+            values.append(value)
+        assert any(value == 1.0 for value in values)
+        assert all(value in {0.0, 1.0} for value in values)
+
+    asyncio.run(run())
+
+
+def test_action_gated_candidate_geometry_frontier_rewards_without_mask_proxy() -> None:
+    async def run() -> None:
+        solved_env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=42,
+            reward_style="action_gated_candidate_geometry_frontier",
+            prompt_style="stage_candidate_geometry_frontier_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        solved_state = {"task": dict(solved_env.get_dataset()[0])}
+        await solved_env.setup_state(solved_state)
+        solved_rollout = solved_state["megaminx"]
+        face, direction = solved_rollout.inverse_solution[0]
+        solved_index = solved_state["task"]["candidate_faces"].index(face) + 1
+        await solved_env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "select_candidate",
+                            "arguments": json.dumps(
+                                {"index": solved_index, "direction": direction}
+                            ),
+                        }
+                    ],
+                )
+            ],
+            solved_state,
+        )
+        assert solved_rollout.solved()
+        assert await reward_style(solved_state) == 20.0
+        assert await action_gated_candidate_geometry_frontier_reward(solved_state) == 1.0
+
+        invalid_state = {"task": dict(solved_env.get_dataset()[0])}
+        await solved_env.setup_state(invalid_state)
+        await solved_env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "select_candidate",
+                            "arguments": json.dumps(
+                                {"index": str(solved_index), "direction": direction}
+                            ),
+                        }
+                    ],
+                )
+            ],
+            invalid_state,
+        )
+        assert await candidate_select_call_count(invalid_state) == 1.0
+        assert await first_candidate_index(invalid_state) == -1.0
+        assert await action_gated_candidate_geometry_frontier_reward(invalid_state) == 0.0
+
+        frontier_env = load_environment(
+            min_depth=2,
+            max_depth=2,
+            num_examples=24,
+            seed=42,
+            reward_style="action_gated_candidate_geometry_frontier",
+            prompt_style="stage_candidate_geometry_frontier_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        selected_row = None
+        selected_move = None
+        selected_index = None
+        for raw_row in frontier_env.get_dataset():
+            row = dict(raw_row)
+            state = {"task": row}
+            await frontier_env.setup_state(state)
+            rollout = state["megaminx"]
+            target_face, _ = rollout.inverse_solution[0]
+            for slot, candidate_face in enumerate(row["candidate_faces"], start=1):
+                for candidate_direction in DIRECTIONS:
+                    move = (candidate_face, candidate_direction)
+                    if candidate_face == target_face:
+                        continue
+                    after = rollout.initial_puzzle.copy()
+                    after.apply_move(*move)
+                    if after.is_solved():
+                        continue
+                    for tail_face in FACES:
+                        for tail_direction in DIRECTIONS:
+                            tail = after.copy()
+                            tail.apply_move(tail_face, tail_direction)
+                            if tail.is_solved():
+                                selected_row = row
+                                selected_move = move
+                                selected_index = slot
+                                break
+                        if selected_row is not None:
+                            break
+                    if selected_row is not None:
+                        break
+                if selected_row is not None:
+                    break
+            if selected_row is not None:
+                break
+
+        assert selected_row is not None
+        assert selected_move is not None
+        assert selected_index is not None
+        frontier_state = {"task": selected_row}
+        await frontier_env.setup_state(frontier_state)
+        await frontier_env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "select_candidate",
+                            "arguments": json.dumps(
+                                {"index": selected_index, "direction": selected_move[1]}
+                            ),
+                        }
+                    ],
+                )
+            ],
+            frontier_state,
+        )
+        assert await first_rotate_face_correct(frontier_state) == 0.0
+        assert await action_reaches_one_turn_frontier(frontier_state) == 1.0
+        assert await action_gated_candidate_geometry_frontier_reward(frontier_state) == 0.75
+
+    asyncio.run(run())
+
+
+def test_action_gated_candidate_mask_frontier_equivalence_rewards_equivalent_frontier_moves() -> None:
+    def leaves_one_turn_frontier(puzzle: MegaminxPuzzle, move: tuple[str, str]) -> bool:
+        after = puzzle.copy()
+        after.apply_move(*move)
+        if after.is_solved():
+            return False
+        for tail_face in FACES:
+            for tail_direction in DIRECTIONS:
+                tail = after.copy()
+                tail.apply_move(tail_face, tail_direction)
+                if tail.is_solved():
+                    return True
+        return False
+
+    async def run() -> None:
+        env = load_environment(
+            min_depth=2,
+            max_depth=2,
+            num_examples=24,
+            seed=42,
+            reward_style="action_gated_candidate_mask_frontier_equivalence",
+            prompt_style="stage_candidate_scorecard_mask_frontier_equivalence_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+
+        selected_row = None
+        selected_move = None
+        selected_index = None
+        partial_move = None
+        partial_index = None
+        partial_mask_count = 0
+        for raw_row in env.get_dataset():
+            row = dict(raw_row)
+            state = {"task": row}
+            await env.setup_state(state)
+            rollout = state["megaminx"]
+            target_face, _ = rollout.inverse_solution[0]
+            candidate_faces = row["candidate_faces"]
+            row_selected_move = None
+            row_selected_index = None
+            row_partial_move = None
+            row_partial_index = None
+            row_partial_mask_count = 0
+            for slot, face in enumerate(candidate_faces, start=1):
+                for direction in DIRECTIONS:
+                    move = (face, direction)
+                    if face != target_face and leaves_one_turn_frontier(
+                        rollout.initial_puzzle,
+                        move,
+                    ):
+                        row_selected_move = move
+                        row_selected_index = slot
+                    if not leaves_one_turn_frontier(rollout.initial_puzzle, move):
+                        after = rollout.initial_puzzle.copy()
+                        after.apply_move(*move)
+                        if not after.is_solved() and row_partial_move is None:
+                            row_partial_move = move
+                            row_partial_index = slot
+                            row_partial_mask_count = rollout.initial_action_mask_counts[move]
+                if row_selected_move is not None:
+                    break
+            if row_selected_move is not None and row_partial_move is not None:
+                selected_row = row
+                selected_move = row_selected_move
+                selected_index = row_selected_index
+                partial_move = row_partial_move
+                partial_index = row_partial_index
+                partial_mask_count = row_partial_mask_count
+                break
+
+        assert selected_row is not None
+        assert selected_move is not None
+        assert selected_index is not None
+        assert partial_move is not None
+        assert partial_index is not None
+
+        state = {"task": selected_row}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        await env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "select_candidate",
+                            "arguments": json.dumps(
+                                {"index": selected_index, "direction": selected_move[1]}
+                            ),
+                        }
+                    ],
+                )
+            ],
+            state,
+        )
+
+        assert not rollout.solved()
+        assert await reward_style(state) == 19.0
+        assert await first_rotate_face_correct(state) == 0.0
+        assert await action_reaches_one_turn_frontier(state) == 1.0
+        assert await frontier_equivalent(state) == 1.0
+        assert await action_gated_candidate_mask_frontier_equivalence_reward(state) == 0.90
+
+        partial_state = {"task": selected_row}
+        await env.setup_state(partial_state)
+        await env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "select_candidate",
+                            "arguments": json.dumps(
+                                {"index": partial_index, "direction": partial_move[1]}
+                            ),
+                        }
+                    ],
+                )
+            ],
+            partial_state,
+        )
+        expected_partial = min(0.60, 0.02 + 0.58 * (partial_mask_count / 5.0))
+        assert await action_reaches_one_turn_frontier(partial_state) == 0.0
+        assert await frontier_equivalent(partial_state) == 0.0
+        assert (
+            await action_gated_candidate_mask_frontier_equivalence_reward(partial_state)
+            == expected_partial
+        )
+
+        solved_env = load_environment(
+            split="depth1",
+            num_examples=1,
+            seed=42,
+            reward_style="action_gated_candidate_mask_frontier_equivalence",
+            prompt_style="stage_candidate_scorecard_mask_frontier_equivalence_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        solved_state = {"task": dict(solved_env.get_dataset()[0])}
+        await solved_env.setup_state(solved_state)
+        solved_rollout = solved_state["megaminx"]
+        face, direction = solved_rollout.inverse_solution[0]
+        solved_index = solved_state["task"]["candidate_faces"].index(face) + 1
+        await solved_env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "select_candidate",
+                            "arguments": json.dumps(
+                                {"index": solved_index, "direction": direction}
+                            ),
+                        }
+                    ],
+                )
+            ],
+            solved_state,
+        )
+        assert solved_rollout.solved()
+        assert await action_reaches_one_turn_frontier(solved_state) == 0.0
+        assert await frontier_equivalent(solved_state) == 1.0
+        assert await action_gated_candidate_mask_frontier_equivalence_reward(solved_state) == 1.0
+
+    asyncio.run(run())
+
+
+def test_action_gated_candidate_mask_index_rank_reward_credits_hidden_face_and_public_mask_rank() -> None:
+    async def run() -> None:
+        env = load_environment(
+            min_depth=2,
+            max_depth=2,
+            num_examples=1,
+            seed=89,
+            reward_style="action_gated_candidate_mask_index_rank",
+            prompt_style="stage_candidate_scorecard_mask_index_native_tool",
+            max_turns=2,
+            move_budget=1,
+        )
+        row = dict(env.get_dataset()[0])
+        candidate_faces = row["candidate_faces"]
+
+        state = {"task": row}
+        await env.setup_state(state)
+        rollout = state["megaminx"]
+        target_face = rollout.inverse_solution[0][0]
+        target_index = candidate_faces.index(target_face) + 1
+        await env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "select_candidate_index",
+                            "arguments": json.dumps({"index": target_index}),
+                        }
+                    ],
+                )
+            ],
+            state,
+        )
+
+        assert await reward_style(state) == 18.0
+        assert await candidate_select_call_count(state) == 1.0
+        assert await action_taken(state) == 0.0
+        assert await first_candidate_face_correct(state) == 1.0
+        assert await first_candidate_public_mask_is_max(state) == 1.0
+        assert await action_gated_candidate_mask_index_rank_reward(state) == 1.0
+
+        wrong_state = {"task": row}
+        await env.setup_state(wrong_state)
+        wrong_rollout = wrong_state["megaminx"]
+        wrong_index = next(
+            index
+            for index, face in enumerate(candidate_faces, start=1)
+            if face != target_face
+        )
+        wrong_face = candidate_faces[wrong_index - 1]
+        scores = [
+            max(
+                wrong_rollout.initial_action_mask_counts[(face, direction)]
+                for direction in DIRECTIONS
+            )
+            for face in candidate_faces
+        ]
+        chosen_score = max(
+            wrong_rollout.initial_action_mask_counts[(wrong_face, direction)]
+            for direction in DIRECTIONS
+        )
+        expected_rank_credit = sum(score <= chosen_score for score in scores) / len(scores)
+        await env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "select_candidate_index",
+                            "arguments": json.dumps({"index": wrong_index}),
+                        }
+                    ],
+                )
+            ],
+            wrong_state,
+        )
+
+        assert await first_candidate_face_correct(wrong_state) == 0.0
+        assert await first_candidate_public_mask_count(wrong_state) == float(chosen_score)
+        assert await first_candidate_public_mask_is_max(wrong_state) == float(
+            chosen_score == max(scores)
+        )
+        assert await first_candidate_public_mask_rank_credit(wrong_state) == expected_rank_credit
+        assert (
+            await action_gated_candidate_mask_index_rank_reward(wrong_state)
+            == 0.45 * expected_rank_credit
+        )
+
+        protocol_state = {"task": row}
+        await env.setup_state(protocol_state)
+        await env.env_response(
+            [
+                AssistantMessage(
+                    content="visible text",
+                    tool_calls=[
+                        {
+                            "id": "native-call",
+                            "name": "select_candidate_index",
+                            "arguments": json.dumps({"index": target_index}),
+                        }
+                    ],
+                )
+            ],
+            protocol_state,
+        )
+        assert await first_candidate_face_correct(protocol_state) == 1.0
+        assert await action_gated_candidate_mask_index_rank_reward(protocol_state) == 0.0
+
+    asyncio.run(run())
+
+
+def test_face_discovery_reward_styles_reject_prompt_mismatches() -> None:
+    mismatches = [
+        ("action_gated_candidate_tournament", "stage_face_tournament_native_tool"),
+        ("action_gated_candidate_index", "stage_candidate_tournament_native_tool"),
+        ("action_gated_candidate_mask_index_rank", "stage_candidate_index_native_tool"),
+        ("action_gated_candidate_mask_index_rank", "stage_candidate_scorecard_mask_native_tool"),
+        (
+            "action_gated_candidate_mask_frontier_equivalence",
+            "stage_candidate_scorecard_mask_native_tool",
+        ),
+        (
+            "action_gated_candidate_geometry_frontier",
+            "stage_candidate_scorecard_mask_frontier_equivalence_native_tool",
+        ),
+        (
+            "action_gated_candidate_geometry_frontier",
+            "stage_candidate_tournament_native_tool",
+        ),
+        ("action_gated_face_tournament", "stage_candidate_tournament_native_tool"),
+        ("action_gated_face_tournament", "stage_candidate_index_native_tool"),
+        ("action_gated_face_discovery", "stage_face_tournament_native_tool"),
+    ]
+    for reward_style_name, prompt_style in mismatches:
+        try:
+            load_environment(
+                min_depth=1,
+                max_depth=2,
+                num_examples=1,
+                reward_style=reward_style_name,
+                prompt_style=prompt_style,
+                move_budget=1,
+            )
+        except ValueError as error:
+            assert reward_style_name in str(error)
+        else:
+            raise AssertionError(
+                f"Expected {reward_style_name} to reject prompt_style={prompt_style}"
+            )
+
+
+def test_candidate_select_first_index_metric_is_first_valid_call() -> None:
+    async def run() -> None:
+        env = load_environment(
+            min_depth=2,
+            max_depth=2,
+            num_examples=1,
+            seed=84,
+            reward_style="action_gated_candidate_tournament",
+            prompt_style="stage_candidate_tournament_native_tool",
+            max_turns=3,
+            move_budget=2,
+        )
+        row = dict(env.get_dataset()[0])
+        state = {"task": row}
+        await env.setup_state(state)
+        await env.env_response(
+            [
+                AssistantMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "native-call-1",
+                            "name": "select_candidate",
+                            "arguments": json.dumps({"index": 1, "direction": "cw"}),
+                        },
+                        {
+                            "id": "native-call-2",
+                            "name": "select_candidate",
+                            "arguments": json.dumps({"index": 2, "direction": "ccw"}),
+                        },
+                    ],
+                )
+            ],
+            state,
+        )
+
+        assert await candidate_select_call_count(state) == 2.0
+        assert await first_candidate_index(state) == 1.0
+        assert await action_gated_candidate_tournament_reward(state) == 0.0
+
+    asyncio.run(run())
+
+
 def test_action_gated_strict_shaped_direction_reward_uses_strict_protocol_gate() -> None:
     async def run() -> None:
         env = load_environment(
@@ -1262,6 +4002,8 @@ def test_action_gated_strict_shaped_direction_reward_handles_native_tool_calls()
         assert solved_rollout.solved()
         assert await native_tool_call_count(solved_state) == 1.0
         assert await text_tool_action_count(solved_state) == 0.0
+        assert await first_rotate_face_id(solved_state) == float(FACES.index(face))
+        assert await first_rotate_direction_id(solved_state) == float(DIRECTIONS.index(direction))
         assert await action_gated_binary_direction_reward(solved_state) == 1.0
         assert await action_gated_strict_shaped_direction_reward(solved_state) == 1.0
 
@@ -2027,13 +4769,48 @@ def test_tool_schema_and_metadata_path() -> None:
     assert set(tool_defs["rotate"]["properties"]) == {"face", "direction"}
     assert tool_defs["rotate"]["properties"]["face"]["enum"] == list(FACES)
     assert tool_defs["rotate"]["properties"]["direction"]["enum"] == list(DIRECTIONS)
+    assert tool_defs["predict_rotate"]["required"] == ["face", "direction", "predicted_after"]
+    assert set(tool_defs["predict_rotate"]["properties"]) == {
+        "face",
+        "direction",
+        "predicted_after",
+    }
+    assert tool_defs["predict_rotate"]["properties"]["face"]["enum"] == list(FACES)
+    assert tool_defs["predict_rotate"]["properties"]["direction"]["enum"] == list(DIRECTIONS)
+    predicted_after_schema = tool_defs["predict_rotate"]["properties"]["predicted_after"]
+    assert predicted_after_schema["type"] == "array"
+    assert predicted_after_schema["minItems"] == 5
+    assert predicted_after_schema["maxItems"] == 5
+    assert predicted_after_schema["items"]["type"] == "string"
+    assert predicted_after_schema["items"]["pattern"] == "^[A-L]{3}$"
+    assert tool_defs["select_candidate"]["required"] == ["index", "direction"]
+    assert set(tool_defs["select_candidate"]["properties"]) == {"index", "direction"}
+    assert tool_defs["select_candidate"]["properties"]["index"]["type"] == "integer"
+    assert tool_defs["select_candidate"]["properties"]["index"]["minimum"] == 1
+    assert tool_defs["select_candidate"]["properties"]["index"]["maximum"] == 4
+    assert tool_defs["select_candidate"]["properties"]["direction"]["enum"] == list(DIRECTIONS)
+    assert tool_defs["select_candidate_index"]["required"] == ["index"]
+    assert set(tool_defs["select_candidate_index"]["properties"]) == {"index"}
+    assert tool_defs["select_candidate_index"]["properties"]["index"]["type"] == "integer"
+    assert tool_defs["select_candidate_index"]["properties"]["index"]["minimum"] == 1
+    assert tool_defs["select_candidate_index"]["properties"]["index"]["maximum"] == 4
     assert tool_defs["inspect"]["required"] == ["face"]
     assert tool_defs["inspect"]["properties"]["face"]["enum"] == [*FACES, "all"]
     assert tool_defs["finish"]["required"] == []
     assert env.env_args["reward_style"] == "dense"
     assert env.env_args["prompt_style"] == "default"
     assert env.env_args["allow_text_tool_actions"] is False
+    assert env.env_args["exposed_tool_names"] is None
     assert env.env_args["move_budget"] is None
+
+    candidate_env = load_environment(
+        split="depth1",
+        num_examples=1,
+        reward_style="action_gated_candidate_tournament",
+        prompt_style="stage_candidate_tournament_native_tool",
+    )
+    assert [tool.name for tool in candidate_env.tool_defs] == ["select_candidate"]
+    assert candidate_env.env_args["exposed_tool_names"] == ("select_candidate",)
 
 
 def test_package_metadata_matches_published_environment() -> None:
@@ -2042,7 +4819,7 @@ def test_package_metadata_matches_published_environment() -> None:
     metadata = json.loads((env_dir / ".prime" / ".env-metadata.json").read_text())
 
     assert pyproject["project"]["name"] == "megaminx-solver"
-    assert pyproject["project"]["version"] == "0.2.29"
+    assert pyproject["project"]["version"] == "0.2.54"
     assert pyproject["project"]["license"] == "MIT"
     assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
         "megaminx_solver"
@@ -2050,4 +4827,5 @@ def test_package_metadata_matches_published_environment() -> None:
     assert metadata["owner"] == "setrf"
     assert metadata["name"] == "megaminx-solver"
     assert metadata["environment_id"] == "ozde27sytxjkc3wm83zv4e2c"
-    assert metadata["wheel_sha256"] == "f19e1209dabae728af50ad540528ef5c71edb838471886cb0945ca078aae8db8"
+    assert isinstance(metadata["wheel_sha256"], str)
+    assert len(metadata["wheel_sha256"]) == 64
