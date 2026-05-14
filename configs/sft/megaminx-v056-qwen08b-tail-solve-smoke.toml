@@ -11,3 +11,5 @@ lora_alpha = 16
 lora_dropout = 0.05
 max_seq_length = 4096
 seed = 64
+format_style = "chat_template"
+gradient_checkpointing = true

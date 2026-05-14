@@ -28,7 +28,7 @@ puzzle simulator.
 | Latest Hub action | `kioezfzz4ji4uquyhm0grzwc` -> `SUCCESS` |
 | Hub visibility | Still reports `PRIVATE` after `--visibility PUBLIC`; API PATCH visibility attempts return HTTP 405 |
 | Latest wheel SHA256 | `f52a3858518f234c4a2df310ab465b37b536fc28ab3ad2e034373109f49e7106` |
-| Latest local tests | `uv run pytest -q` -> `119 passed in 36.54s` |
+| Latest local tests | `uv run pytest -q` -> `122 passed in 41.68s` |
 | Latest scaffold baseline | [`etecohz0kxjx0hwpj06aoevq`](https://app.primeintellect.ai/dashboard/training/etecohz0kxjx0hwpj06aoevq): reward `0.7336`, face `0.7034`, zero errors |
 | Stopped v0.2.46 train | [`hv6ljq5jlc8w391a0q38373l`](https://app.primeintellect.ai/dashboard/training/hv6ljq5jlc8w391a0q38373l): best step `0.7618`, final step `0.6580`, cost `$4.17` |
 | v0.2.47 frontier baseline | [`v6p7exy9p8h4vbek7ujvj86c`](https://app.primeintellect.ai/dashboard/training/v6p7exy9p8h4vbek7ujvj86c): reward `0.4620`, face `0.7817`, action-frontier `0.1878` |
@@ -133,9 +133,12 @@ The derived messages/tools SFT JSONL has SHA256
 `59b9db129517f3a6f86a868f06179826a032b2e0d07c4393d5a9ae168e8b1ec3`.
 The optional OpenAI-style function-tool projection has SHA256
 `2ed51c37e74e32d7944bc7ef14d2bc0d059886698c88d4fbac1e17fbd2604627`.
-The local LoRA warm-start scaffold validates that SFT JSONL without importing
-GPU ML packages in `--dry-run` mode. Real adapter training requires a GPU
-machine with `torch`, `transformers`, and `peft`; use
+The local LoRA warm-start scaffold renders the SFT JSONL through Qwen's native
+chat/tool-call template, masks loss to assistant tool-call spans, and validates
+the data path in `--dry-run` mode. A one-step local MPS smoke reached model
+forward/backward but hit the Mac memory ceiling at 4096 tokens, so real adapter
+training should run on a larger GPU machine with `torch`, `transformers`, and
+`peft`; use
 `configs/sft/megaminx-v056-qwen9b-tail-solve-lora.toml` for the first full
 capacity warm start.
 Hosted follow-up runs are blocked until Prime billing is restored;

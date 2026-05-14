@@ -187,10 +187,13 @@ uv run python scripts/train_sft_lora.py \
   --config configs/sft/megaminx-v056-qwen9b-tail-solve-lora.toml
 ```
 
-The smoke config validates the data/format path and reports missing local ML
-packages without importing them. The full 9B config expects a GPU machine with
-`torch`, `transformers`, and `peft`; its `max_steps` value means optimizer
-updates, so gradient accumulation does not silently shrink the intended run.
+The smoke config validates the data/format path through Qwen's native
+chat/tool-call template and reports dependency status. The trainer masks loss to
+assistant tool-call spans, enables gradient checkpointing, and treats
+`max_steps` as optimizer updates, so gradient accumulation does not silently
+shrink the intended run. A one-step local MPS smoke on 0.8B reached
+forward/backward but hit the Mac memory ceiling at 4096 tokens; run the full 9B
+config on a larger CUDA GPU box with `torch`, `transformers`, and `peft`.
 
 Do not continue long low-learning-rate PPO on the same distribution without
 heldout gates. Previous runs repeatedly showed online movement that did not
