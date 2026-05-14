@@ -707,6 +707,7 @@ Concrete success criteria from the active goal and finish plan:
 | Hub environment public | CLI still reports visibility `PRIVATE` after public pushes; direct API PATCH attempts against the env id and slug return HTTP 405 | Blocked |
 | Hosted RL run completed | `bg0vbir6u6d521qcr8kghvvv` completed with final online reward `0.7335`, solved `0.6615`, zero tool/protocol/env errors | Passed |
 | Probeable trained checkpoint exists | `lbujflb1zyzv764lh9dhzu3s` from `junxsn2n4rz3uvkcl88ru2in` was probed on v0.2.54; v0.2.55 produced READY checkpoint `o68kzy5up4e65ve6lktmkuat` but billing blocked heldout probes | Passed, then blocked |
+| v0.2.56 matched probe configs | Four tracked configs cover base and checkpoint `o68kzy5up4e65ve6lktmkuat` on heldout seeds 146 and 246 against env version `0.2.56`; TOML parse validation passed | Ready, blocked by billing |
 | Heldout checkpoint improves base | Seed 146: reward `0.6335` -> `0.6631`, solved `0.5625` -> `0.6048`; seed 246: reward `0.6707` -> `0.6712`, solved `0.5723` -> `0.5801` | Passed, modest |
 | Original `+30pp` solved target | Best v0.2.54 two-seed average solved gain is about `+2.50pp` | Failed |
 | Final report with commands, costs, limitations | This report includes design, rewards, runs, heldout table, costs, reproduction commands, and limitations | Passed |
@@ -733,9 +734,9 @@ The repository release steps are complete: CI passed, PR `#3` is merged to
 | v0.2.54 depth-2 checkpoint improves heldout reward | Passed: tail-room checkpoint reward `0.6631` vs base `0.6335` |
 | v0.2.54 depth-2 checkpoint improves heldout solved | Passed: tail-room checkpoint solved `0.6048` vs base `0.5625` |
 | v0.2.55 checkpoint improves heldout reward | Blocked: checkpoint `o68kzy5up4e65ve6lktmkuat` is READY, but heldout probe launches failed with `Payment required` |
-| v0.2.56 checkpoint improves heldout reward | Not run: v0.2.56 is a package hardening/export release and hosted run creation remains billing-blocked |
+| v0.2.56 checkpoint improves heldout reward | Ready but not run: matched base/checkpoint configs are tracked for seeds 146 and 246, but hosted run creation remains billing-blocked |
 | Easy reward improves over base | Not completed after depth-1 failed large-gain gate |
-| Commands/results reproducible | Passed for package, train config, and native probe shape |
+| Commands/results reproducible | Passed for package, oracle export, tracked v0.2.54/v0.2.55/v0.2.56 train configs, and native probe shape |
 
 Finished state so far: environment package released and hardened, native-tool RL
 measurement working, modest positive native result documented, clean
