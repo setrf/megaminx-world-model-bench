@@ -190,6 +190,12 @@ uv run python scripts/train_sft_lora.py \
   --output-dir /tmp/megaminx-v056-qwen08b-sft-smoke-1step-2048
 uv run python scripts/eval_sft_lora_offline.py --dry-run --num-examples 2
 uv run python scripts/eval_sft_lora_offline.py --oracle --heldout-set heldout --num-examples 2
+uv run python scripts/eval_sft_lora_offline.py \
+  --adapter-dir /tmp/megaminx-v056-qwen08b-sft-smoke-1step-2048 \
+  --base-model Qwen/Qwen3.5-0.8B \
+  --heldout-set heldout \
+  --num-examples 2 \
+  --max-new-tokens 96
 uv run python scripts/train_sft_lora.py \
   --config configs/sft/megaminx-v056-qwen9b-tail-solve-lora.toml
 ```
@@ -202,6 +208,10 @@ shrink the intended run. A one-step local MPS smoke on 0.8B completed at 2048
 tokens and saved `/tmp/megaminx-v056-qwen08b-sft-smoke-1step-2048`; 4096 tokens
 hit the Mac memory ceiling. Run the full 9B config on a larger CUDA GPU box
 with `torch`, `transformers`, and `peft`.
+The one-step smoke adapter is not expected to learn the policy: its two-row
+heldout eval completed but reported `parse_ok_rate=0.0`, `solved_rate=0.0`,
+and `strict_two_call_correct_rate=0.0`. Treat it as an end-to-end wiring check,
+not a model-quality result.
 
 After any adapter train, evaluate it locally before more PPO:
 
