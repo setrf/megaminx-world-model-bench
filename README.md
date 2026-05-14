@@ -110,6 +110,9 @@ uv run python scripts/export_oracle_trajectories.py \
   --split train_candidate_relative_flow_rule_tail_solve_depth2 \
   --output /tmp/megaminx-oracle-v056-1024.jsonl
 uv run python scripts/summarize_oracle_trajectories.py /tmp/megaminx-oracle-v056-1024.jsonl
+uv run python scripts/convert_oracle_to_sft_jsonl.py \
+  /tmp/megaminx-oracle-v056-1024.jsonl \
+  --output /tmp/megaminx-oracle-v056-1024-sft.jsonl
 ```
 
 The current 1,024-row v0.2.56 oracle audit solves every row with exactly two
@@ -117,6 +120,8 @@ native `select_candidate` actions, balanced slots/directions, and no visible
 row-id prompt leakage. Re-running the export is byte-identical (`cmp_exit=0`);
 the current SHA256 is
 `0604bd14343aebb04f9b68ba77cb1dd34d1062f025d011d3961298393b3258e7`.
+The derived messages/tools SFT JSONL has SHA256
+`99575888ced056df08a8950bf20c8fe31fbbfe0b2bbf1fcf30c12401165f44ed`.
 Hosted follow-up runs are blocked until Prime billing is restored;
 `prime wallet --plain` reported a `$-0.80` balance on May 14, 2026.
 

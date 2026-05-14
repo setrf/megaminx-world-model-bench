@@ -100,3 +100,41 @@ def test_summarize_oracle_trajectories_cli_validates_export(tmp_path: Path) -> N
     assert summary["prompt_leak_count"] == 0
     assert set(summary["first_slot_counts"]).issubset({"1", "2", "3", "4"})
     assert set(summary["second_slot_counts"]).issubset({"1", "2", "3", "4"})
+
+
+def test_convert_oracle_to_sft_jsonl_writes_safe_chat_records(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    convert_script = repo_root / "scripts" / "convert_oracle_to_sft_jsonl.py"
+    oracle_output = tmp_path / "oracle.jsonl"
+    sft_output = tmp_path / "sft.jsonl"
+    records = _run_export(oracle_output)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(convert_script),
+            str(oracle_output),
+            "--output",
+            str(sft_output),
+        ],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert f"Wrote {len(records)} SFT records" in result.stdout
+
+    converted = [
+        json.loads(line)
+        for line in sft_output.read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(converted) == len(records) == 2
+    for source, item in zip(records, converted, strict=True):
+        assert set(item) == {"messages", "metadata", "tools"}
+        assert item["messages"] == source["messages"]
+        assert item["tools"] == source["tools"]
+        assert item["metadata"]["env_version"] == "0.2.56"
+        assert item["metadata"]["reward_style"] == "action_gated_candidate_path_tail_solve"
+        assert "scramble" not in item["metadata"]
+        assert "inverse_solution" not in item["metadata"]
+        assert "actions" not in item
