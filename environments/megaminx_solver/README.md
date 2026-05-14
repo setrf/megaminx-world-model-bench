@@ -2,41 +2,119 @@
 
 [![Prime Hub](https://img.shields.io/badge/Prime%20Hub-setrf%2Fmegaminx--solver-blue)](https://app.primeintellect.ai/dashboard/environments/setrf/megaminx-solver)
 [![Latest env](https://img.shields.io/badge/env-v0.2.56-0f766e)](https://app.primeintellect.ai/dashboard/environments/setrf/megaminx-solver)
-[![Clean geometry](https://img.shields.io/badge/clean%20geometry-0.303-16a34a)](https://app.primeintellect.ai/dashboard/training/dbup76z9d460x4fbcfxw8yql)
 [![Breakthrough eval](https://img.shields.io/badge/v0.2.22%2035B-0.929-2563eb)](https://app.primeintellect.ai/dashboard/evaluations/vse6uoo8c9y156svyyv41qll)
+[![GitHub](https://img.shields.io/badge/GitHub-setrf%2Fmegaminx--world--model--bench-black)](https://github.com/setrf/megaminx-world-model-bench)
 
-Trainable multi-turn Megaminx environment for Prime Intellect Verifiers. The
-model sees a compact text facelet net, acts through tools, and receives a
-deterministic reward from a persistent puzzle simulator.
+`megaminx-solver` is a trainable Prime Intellect / Verifiers environment for
+studying whether language models can learn a physical puzzle world through
+state, tool use, reward, and repeated rollouts.
 
-## Overview
+The environment simulates a symbolic Megaminx, a twelve-faced twisty puzzle.
+Models observe compact facelet or sensor text, act through native tools, and
+receive deterministic rewards from a persistent simulator. The current release
+focuses on a hardened depth-2 candidate-path curriculum for native Hosted
+Training and an oracle trajectory exporter for SFT warm starts.
 
-| Item | Value |
-| --- | --- |
-| Environment id | `megaminx-solver` |
-| Hub target | `setrf/megaminx-solver` |
-| Current package | `setrf/megaminx-solver@0.2.56` |
-| Type | `vf.StatefulToolEnv` |
-| Tags | `multi-turn`, `tool-env`, `spatial-reasoning`, `megaminx`, `rl`, `eval` |
+## What This Environment Tests
 
-## Task
+This is not a trivia benchmark. The model must interact with a world whose
+state changes after every action.
 
-Each rollout starts from a deterministic generated scramble. Faces are labeled
-`A` through `L`; a solved face contains only its own label. The model can call:
+The environment tests:
+
+- **Physical state tracking:** stickers move when a face turns, and future
+  observations depend on earlier actions.
+- **Local geometry:** each face turn affects one pentagonal face and a ring of
+  adjacent strips.
+- **Tool grounding:** the answer is not a text string; the model must call the
+  right tool with valid arguments.
+- **Planning horizon:** depth-1 tasks test first-action grounding; depth-2
+  tasks require acting, reading the refreshed world state, and acting again.
+- **Protocol discipline:** native tool calls, text fallback actions, malformed
+  calls, and protocol violations are measured separately.
+- **Shortcut resistance:** hidden scramble metadata is never printed, and later
+  releases remove visible masks, row ids, fixed slots, and other accidental
+  hints found during audits.
+
+## Rollout Contract
+
+Every rollout follows this contract:
+
+1. A deterministic scramble is generated from `split`, `seed`, and example
+   index.
+2. The simulator applies the scramble to a solved Megaminx.
+3. The inverse solution is stored in task metadata for scoring, tests, and
+   metrics, but not shown to the model.
+4. The prompt prints a compact observation or staged sensor/candidate view.
+5. The model acts through native tools or, only for configured JSON prompt
+   styles, a text action fallback.
+6. The environment mutates the same puzzle state after each action.
+7. The rubric scores the final trajectory and emits diagnostic metrics.
+
+The implementation class is `MegaminxEnv(vf.StatefulToolEnv)`, so rollout state
+is persistent rather than reconstructed from text.
+
+## Observations
+
+The base observation includes:
+
+- solved/not-solved status
+- sticker accuracy
+- piece accuracy
+- move budget
+- last move
+- compact face lines for faces `A` through `L`
+
+A solved face contains only its own label. Centers are fixed and identify the
+target color for a face. Edge and corner strings show the sticker labels
+currently visible on that face.
+
+Staged prompt styles may replace or augment the full net with sensor tables,
+direction-flow evidence, candidate faces, candidate-relative flow tokens, or a
+refreshed candidate table after the first action.
+
+Prompts intentionally do not expose:
+
+- scramble moves
+- inverse solution
+- hidden answer
+- row-derived ids in the current v0.2.56 candidate-path lane
+- hidden candidate-slot seeds
+
+## Tools
+
+General puzzle tools:
 
 | Tool | Arguments | Meaning |
 | --- | --- | --- |
-| `rotate` | `face: A-L`, `direction: cw|ccw` | Apply one face turn |
-| `inspect` | `face: A-L|all` | Observe a face or full net |
-| `finish` | none | End the rollout |
+| `rotate` | `face: A-L`, `direction: cw|ccw` | Apply one legal Megaminx face turn. |
+| `inspect` | `face: A-L|all` | Return one face or the full compact net without changing state. |
+| `finish` | none | End the rollout and report the final state. |
 
-The scramble and inverse solution are stored in task metadata for tests and
-metrics, but they are not printed directly in the prompt.
+Staged tools used by research lanes:
 
-## Public API
+| Tool | Arguments | Meaning |
+| --- | --- | --- |
+| `select_candidate` | `index: 1-4`, `direction: cw|ccw` | Rotate the face shown in a visible candidate slot. Current depth-2 lanes call this twice. |
+| `select_candidate_index` | `index: 1-4` | Select a candidate face without choosing direction. Used for face-discovery ablations. |
+| `predict_rotate` | `face`, `direction`, `predicted_after` | Predict five local post-move strips, then apply the move. |
+
+Candidate prompt styles expose only their matching candidate tool by default.
+For example, `stage_candidate_relative_flow_rule_solve2_native_tool` exposes
+`select_candidate` rather than the full general tool set.
+
+Important schema detail: `MegaminxEnv` implements all six tools. With
+`exposed_tool_names=None`, ordinary non-candidate prompt styles expose all six
+implemented tools even though the prompt asks the model to use the general
+`rotate`/`inspect`/`finish` loop. Candidate prompt styles automatically narrow
+the schema to `select_candidate` or `select_candidate_index`.
+
+## `load_environment` API
 
 ```python
-load_environment(
+from megaminx_solver import load_environment
+
+env = load_environment(
     split="train",
     min_depth=1,
     max_depth=8,
@@ -47,27 +125,82 @@ load_environment(
     reward_style="dense",
     prompt_style="default",
     allow_text_tool_actions=None,
+    exposed_tool_names=None,
 )
 ```
 
-Named splits:
+| Argument | Default | Description |
+| --- | --- | --- |
+| `split` | `"train"` | Named curriculum split. |
+| `min_depth` | `1` | Minimum scramble depth for custom splits. |
+| `max_depth` | `8` | Maximum scramble depth for custom splits. |
+| `num_examples` | `200` | Deterministic dataset size. |
+| `seed` | `42` | Dataset seed. |
+| `max_turns` | `None` | Global Verifiers turn cap. |
+| `move_budget` | `None` | Puzzle move budget shown to the model. |
+| `reward_style` | `"dense"` | Rubric/reward family. |
+| `prompt_style` | `"default"` | Observation and tool protocol family. |
+| `allow_text_tool_actions` | `None` | Enables JSON/private-text action parsing for JSON prompt styles. |
+| `exposed_tool_names` | `None` | Optional explicit tool subset. |
 
-| Split | Depths | Intended use |
+By default, `allow_text_tool_actions` is true only for JSON prompt styles and
+false for native Hosted Training styles.
+
+Public package exports:
+
+```text
+MegaminxEnv
+build_dataset
+load_environment
+MegaminxPuzzle
+MegaminxTopology
+FACES
+POSITIONS_PER_FACE
+STICKERS_PER_PUZZLE
+EDGE_COUNT
+CORNER_COUNT
+generate_scramble
+inverse_moves
+```
+
+## Splits And Curricula
+
+| Split | Depths | Purpose |
 | --- | ---: | --- |
-| `depth1`, `train_depth1`, `eval_depth1` | 1 | First RL and one-turn heldout |
-| `easy`, `train_easy`, `eval_easy` | 1-3 | Short-scramble generalization |
-| `medium`, `train_medium`, `eval_medium` | 4-6 | Mid-horizon eval |
-| `hard`, `train_hard`, `eval_hard` | 7-10 | Hard eval |
-| `eval` | 1-10 | Broad eval |
-| `train` | custom, default 1-8 | General curriculum |
+| `depth1`, `train_depth1`, `eval_depth1` | 1 | One-turn action grounding. |
+| `easy`, `train_easy`, `eval_easy` | 1-3 | Short-scramble generalization. |
+| `medium`, `train_medium`, `eval_medium` | 4-6 | Mid-horizon evaluation. |
+| `hard`, `train_hard`, `eval_hard` | 7-10 | Hard evaluation. |
+| `eval` | 1-10 | Broad mixed-depth evaluation. |
+| `train` | custom, default 1-8 | General curriculum. |
+| `train_candidate_relative_flow_rule_tail_solve_depth2` | 2 | Current v0.2.56 oracle/SFT lane. |
 
-Default move budget is `2 * scramble_depth + 4`, capped at `32`, unless
-`max_turns` or `move_budget` is supplied. For the staged depth-1 experiments we
-use `max_turns=2` and `move_budget=1`.
+For ordinary rollouts, the default move budget is `min(32, 2 * depth + 4)`.
+Staged one-action and two-action curricula often override this with a smaller
+`move_budget` to make the protocol exact.
 
-## Rewards
+## Simulator Guarantees
 
-Default dense reward:
+The simulator tracks the Megaminx as facelet state:
+
+- 12 faces: `A` through `L`
+- 132 visible stickers
+- 12 fixed centers
+- 30 edge pieces
+- 20 corner pieces
+- 24 legal moves: each face clockwise or counterclockwise
+- five clockwise turns of any face return to identity
+- clockwise followed by counterclockwise returns to identity
+- every move preserves the sticker multiset
+- generated scrambles plus their inverse solve the puzzle
+
+The dodecahedron topology is represented through face-neighbor rings and
+programmatic side strips. The tests assert the topology and move invariants so
+reward bugs cannot silently become puzzle-physics bugs.
+
+## Reward Styles
+
+The default dense reward is:
 
 ```text
 0.60 * solved
@@ -76,189 +209,227 @@ Default dense reward:
 + 0.05 * efficiency_if_solved
 ```
 
-Supported reward styles:
+RL-facing rewards are action-gated so tool-free reasoning does not score well.
+The important families are:
 
-- `dense`
-- `action_gated_dense`
-- `action_gated_curriculum`
-- `action_gated_overlap`
-- `action_gated_direction`
-- `action_gated_exact_direction`
-- `action_gated_binary_direction`
-- `action_gated_strict_shaped_direction`
-- `action_gated_candidate_mask_frontier_equivalence`
-- `action_gated_candidate_geometry_frontier`
-- `action_gated_candidate_strict_frontier`
-- `action_gated_candidate_path_tail_solve`
+| Reward style | Use |
+| --- | --- |
+| `dense` | General multi-turn simulator reward. |
+| `action_gated_dense` | Dense reward capped at zero until an action is taken. |
+| `action_gated_binary_direction` | Strict depth-1 eval: exactly one clean inverse `rotate` scores `1.0`. |
+| `action_gated_strict_shaped_direction` | Depth-1 training reward with partial credit for learnable wrong-but-informative actions. |
+| `action_gated_candidate_geometry_frontier` | Candidate selection using visible affected geometry. |
+| `action_gated_candidate_strict_frontier` | Candidate-relative flow reward for one-turn-frontier progress. |
+| `action_gated_candidate_path_solve` | Two-call candidate path that rewards solving after refreshed observation. |
+| `action_gated_candidate_path_tail_solve` | Current v0.2.56 hardened two-call reward. |
 
-The strict eval gate is `action_gated_binary_direction`: reward is `1.0` only
-for one clean first `rotate` equal to the inverse move, and `0.0` otherwise.
-Clean means exactly one action attempt, exactly one rotate, no inspect/finish,
-no illegal move, no parse/call error, and no protocol violation.
+v0.2.56 caps non-solving second-step tail reward below `0.50`, so a rollout
+must actually solve to receive a high score.
 
-The current hosted RL on-ramp uses
-`action_gated_strict_shaped_direction`: solved exact action gives `1.0`, a
-clean wrong-direction same-face action gives partial credit around `0.40`, and
-other valid rotations receive smaller direction/progress credit. This keeps
-rollouts learnable while the heldout acceptance metric remains binary.
+Full implemented reward-style registry:
 
-`reward_style` is exported as a numeric metric: binary direction is `6.0`,
-strict shaped direction is `7.0`.
+```text
+dense
+action_gated_dense
+action_gated_curriculum
+action_gated_overlap
+action_gated_direction
+action_gated_exact_direction
+action_gated_binary_direction
+action_gated_strict_shaped_direction
+action_gated_overlap_strict_shaped_direction
+action_gated_mask_overlap_strict_shaped_direction
+action_gated_counterfactual_frontier_strict
+action_gated_counterfactual_frontier_value_strict
+action_gated_predict_rotate_value_strict
+action_gated_predict_rotate_transition
+action_gated_face_discovery
+action_gated_face_tournament
+action_gated_candidate_tournament
+action_gated_candidate_index
+action_gated_candidate_mask_index_rank
+action_gated_candidate_mask_frontier_equivalence
+action_gated_candidate_geometry_frontier
+action_gated_candidate_strict_frontier
+action_gated_candidate_path_solve
+action_gated_candidate_path_tail_solve
+```
 
 ## Prompt Styles
 
-The main current styles are:
+Representative prompt styles:
 
-- `stage_solve_direction_flow_native_tool`: native tool-call training/probe
-  lane. Use `allow_text_tool_actions=false`.
-- `stage_solve_direction_flow_native_tool_v2`: native all-candidate
-  solve-flow lane. It removes the explicit face hint, supports depths 1-2, and
-  is the current continuation path for larger RL gains.
-- `stage_solve_direction_flow_json_action`: served chat-completions eval lane.
-  Use `allow_text_tool_actions=true` for Qwen JSON/private text fallback.
-- `stage_candidate_scorecard_mask_frontier_equivalence_native_tool`: v0.2.47
-  native candidate-mask lane. It uses the same public scorecard columns as the
-  v0.2.46 mask scorecard and rewards clean solved actions or depth-2
-  one-turn-frontier-equivalent actions.
-- `stage_candidate_geometry_frontier_native_tool`: v0.2.50 clean native
-  candidate lane. It removes printed `cw_mask`/`ccw_mask` reward proxies and
-  builds the four candidate slots from visible affected geometry instead of
-  injecting the hidden solution face.
-- `stage_candidate_relative_flow_frontier_native_tool`: v0.2.52 native
-  candidate lane. It prints a coordinate transform of visible strips into
-  candidate-relative flow tokens and pairs with the stricter frontier reward.
-- `stage_candidate_relative_flow_rule_frontier_native_tool`: v0.2.53 native
-  candidate lane. It keeps the same visible flow tokens and adds a fair
-  counting rule for selecting the largest `+1` or `-1` evidence.
-- `stage_candidate_relative_flow_rule_solve2_native_tool`: v0.2.54 native
-  two-call candidate-path lane. After each `select_candidate` call, the
-  environment refreshes the visible candidate relative-flow table so a depth-2
-  rollout can solve instead of only choosing a one-turn-frontier first move.
-- `default`, `action_first`, topology/sensor JSON styles, and older staged
-  prompts remain available for ablations and history.
+| Prompt style | Tool surface | Description |
+| --- | --- | --- |
+| `default` | `rotate`, `inspect`, `finish` | General text Megaminx puzzle. |
+| `action_first` | `rotate`, `inspect`, `finish` | General puzzle with stronger instruction to act before explanation. |
+| `stage_solve_direction_flow_json_action` | JSON/text `rotate` fallback | Served eval compatibility lane. |
+| `stage_solve_direction_flow_native_tool` | native `rotate` | Depth-1 Hosted Training native tool lane. |
+| `stage_solve_direction_flow_native_tool_v2` | native `rotate` | Depth 1-2 all-candidate solve-flow lane. |
+| `stage_candidate_geometry_frontier_native_tool` | native `select_candidate` | Clean candidate lane built from visible affected geometry. |
+| `stage_candidate_relative_flow_rule_frontier_native_tool` | native `select_candidate` | Candidate-relative flow with explicit counting rule. |
+| `stage_candidate_relative_flow_rule_solve2_native_tool` | native `select_candidate` twice | Current depth-2 path: choose candidate, observe refreshed table, choose again. |
+| `stage_predict_rotate_native_tool` | native `predict_rotate` | Predict local strips before rotating. |
 
-Depth-1 staged prompts intentionally reveal the affected face and isolate the
-binary direction bit. They do not print the scramble, inverse solution, answer
-candidate, winner, overlap count, or precomputed best action.
+Older prompt styles remain available for ablations and reproducibility, but the
+current release should be evaluated through the v0.2.56 candidate-path lane.
+
+Full implemented prompt-style registry:
+
+```text
+default
+action_first
+direct_json_action
+choice_json_action
+topology_choice_json_action
+sensor_choice_json_action
+sensor_match_json_action
+sensor_indexed_match_json_action
+sensor_candidate_strips_json_action
+stage_face_hint_direction_json_action
+stage_direction_flow_json_action
+stage_direction_flow_reasoned_json_action
+stage_solve_direction_flow_json_action
+native_action
+topology_native_tool
+sensor_native_tool
+sensor_match_native_tool
+stage_direction_flow_native_tool
+stage_solve_direction_flow_native_tool
+stage_solve_direction_flow_native_tool_v2
+stage_solve_action_table_native_tool
+stage_solve_action_mask_native_tool
+stage_frontier_sensor_native_tool
+stage_frontier_sensor_compact_native_tool
+stage_predict_rotate_native_tool
+stage_predict_transition_native_tool
+stage_face_discovery_native_tool
+stage_face_tournament_native_tool
+stage_candidate_tournament_native_tool
+stage_candidate_index_native_tool
+stage_candidate_scorecard_native_tool
+stage_candidate_scorecard_no_frontier_native_tool
+stage_candidate_scorecard_mask_native_tool
+stage_candidate_scorecard_mask_index_native_tool
+stage_candidate_scorecard_mask_frontier_equivalence_native_tool
+stage_candidate_geometry_frontier_native_tool
+stage_candidate_relative_flow_frontier_native_tool
+stage_candidate_relative_flow_rule_frontier_native_tool
+stage_candidate_relative_flow_rule_solve2_native_tool
+```
+
+## Protocol Lanes
+
+There are two distinct protocol lanes:
+
+| Lane | Use | Tool handling |
+| --- | --- | --- |
+| Native Hosted Training | Credible RL measurement | Model emits native `tool_calls`; text before a tool call is a protocol violation. |
+| Served eval compatibility | Historical/scaling evals | JSON/private-text fallback can be parsed into tool actions when native calls are unreliable. |
+
+These lanes should not be mixed when making claims. Native tool-call metrics
+are the trusted RL surface.
 
 ## Metrics
 
-Tracked metrics include:
+The environment reports outcome, action, protocol, and diagnostic metrics:
+
+| Group | Examples |
+| --- | --- |
+| Outcome | `solved_rate`, `sticker_accuracy`, `piece_accuracy`, `move_count`, `scramble_depth` |
+| Protocol | `native_tool_call_count`, `text_tool_action_count`, `private_text_action_count`, `tool_parse_error_count`, `tool_call_error_count`, `protocol_violation_count` |
+| Tool counts | `rotate_call_count`, `candidate_select_call_count`, `predict_rotate_call_count`, `inspect_call_count`, `finish_call_count` |
+| First action | `first_rotate_correct`, `first_rotate_face_correct`, `first_rotate_direction_correct`, `first_rotate_neighbor_overlap` |
+| Candidate path | `target_face_in_candidate_set`, `target_candidate_index`, `second_target_candidate_index`, `candidate_path_completed` |
+| Relative flow | `first_candidate_relative_flow_count`, `first_candidate_relative_flow_margin`, `first_candidate_relative_flow_is_candidate_max`, second-step variants |
+| Prediction | `first_prediction_strip_accuracy`, `first_prediction_exact_strip_count`, `first_prediction_char_accuracy`, `first_prediction_valid` |
+
+These metrics make failures debuggable. For example, a run can have nonzero
+reward but fail because the model called text JSON instead of native tools,
+chose the right face with the wrong direction, selected a visible shortcut, or
+improved online reward without improving heldout solves.
+
+The rubric currently includes the primary reward plus sticker, piece, and
+efficiency functions, followed by 70 zero-weight diagnostic metric functions.
+The exact metric registry lives in `_build_rubric(...)` in
+`megaminx_solver.py`; the groups above are the stable public reading guide.
+
+## Determinism And Hidden Metadata
+
+Task metadata stores:
+
+- scramble
+- inverse solution
+- split
+- example id
+- reward style
+- prompt style
+- hidden candidate seeds
+
+This metadata is used by tests, rewards, oracle export, and metrics. It is not
+printed in the current prompts. v0.2.56 specifically removes row-id leakage
+from the visible prompt and derives refreshed second-step candidate slots from
+hidden scramble/action metadata.
+
+The v0.2.56 1,024-row oracle export is byte-stable when re-run with the same
+arguments. Recorded SHA256:
 
 ```text
-illegal_move_count
-move_count
-solved_rate
-scramble_depth
-tool_call_count
-native_tool_call_count
-text_tool_action_count
-private_text_action_count
-tool_parse_error_count
-tool_call_error_count
-protocol_violation_count
-rotate_call_count
-inspect_call_count
-finish_call_count
-action_taken
-first_rotate_correct
-first_rotate_face_correct
-target_face_in_candidate_set
-target_candidate_index
-second_target_candidate_index
-first_candidate_relative_flow_count
-first_candidate_relative_flow_margin
-first_candidate_relative_flow_is_candidate_max
-second_candidate_relative_flow_count
-second_candidate_relative_flow_margin
-second_candidate_relative_flow_is_candidate_max
-candidate_path_completed
-candidate_relative_flow_oracle_unique
-first_rotate_direction_correct
-first_rotate_face_id
-first_rotate_direction_id
-first_rotate_neighbor_overlap
-reward_style
-initial_sticker_accuracy
-initial_piece_accuracy
+1038afa6958030832c028840dafc22fc3724206461608e2ed809c90fa9695e7b
 ```
 
-v0.2.29 hardens the private reasoning path: structured non-action private
-metadata such as reasoning summaries is ignored, while malformed private JSON
-action attempts are counted as private parse errors.
+## Leakage And Shortcut Controls
 
-v0.2.30 adds the native-v2 all-candidate prompt and action-id metrics. The
-native-v2 prompt is restricted to depth 1-2 because it is intended as a
-first-move curriculum before broader `easy` training.
+This environment went through multiple shortcut audits. Important fixes:
 
-v0.2.46 adds `stage_candidate_scorecard_mask_native_tool`, the current
-least-scaffolded scorecard lane: four candidate faces, affected-neighbor counts,
-and direction masks, with scalar `support`, `frontier`, inverse solution, and
-answer fields removed from the prompt.
+- removed direct answer, scramble, inverse solution, winner, and scalar support
+  fields from prompts
+- separated native Hosted Training from served JSON fallback evals
+- removed public `cw_mask` / `ccw_mask` reward proxies from the clean geometry
+  lane
+- stopped seeding candidate slots directly from hidden solution metadata in the
+  clean lane
+- balanced second-step candidate target slots
+- removed visible example-id dependence from refreshed second-step slots
+- capped high reward for non-solving second-step tail actions
+- added oracle and SFT JSONL validators to check for forbidden payload fields
 
-v0.2.47 adds `stage_candidate_scorecard_mask_frontier_equivalence_native_tool`.
-It preserves the v0.2.46 public scorecard columns and `select_candidate`
-surface, but `action_gated_candidate_mask_frontier_equivalence` gives high
-credit to any clean depth-2 first move that leaves the puzzle one turn from
-solved.
+Historical scaffolded runs are kept for reproducibility, but v0.2.56 is the
+current hardened baseline.
 
-v0.2.50 added `stage_candidate_geometry_frontier_native_tool`, the first clean
-candidate hosted-RL lane. It keeps native `select_candidate(index, direction)` calls, but
-removes the public mask scorecard and avoids seeding candidate slots from hidden
-solution metadata.
+## Current Evidence
 
-v0.2.51 adds `target_face_in_candidate_set`, a diagnostic metric for the clean
-geometry-frontier lane. The diagnostic Qwen 9B baseline
-[`g8egyymgds47wtb4rbieyd20`](https://app.primeintellect.ai/dashboard/training/g8egyymgds47wtb4rbieyd20)
-reported target availability `1.0`, reward `0.3241`, solved `0.0622`, native
-tool calls `1.0`, and zero protocol/illegal-move errors.
+| Claim | Evidence |
+| --- | --- |
+| Package pushed | `setrf/megaminx-solver@0.2.56`, Hub action `SUCCESS` |
+| Local tests | `uv run pytest -q` recorded `129 passed in 34.88s` |
+| Prompt breakthrough | v0.2.22 35B eval solved `0.929` on 240 heldout examples: <https://app.primeintellect.ai/dashboard/evaluations/vse6uoo8c9y156svyyv41qll> |
+| Clean native RL lane | v0.2.54 two-call candidate-path run reached online reward `0.7335`, solved `0.6615`, two native calls, zero env errors |
+| Best matched hosted heldout gain | v0.2.54 checkpoint improved solved from `0.5625` to `0.6048` on one heldout seed |
+| Local SFT warm-start signal | `Qwen/Qwen3.5-0.8B` local adapter improved from `0/32` to `18/32` heldout solves |
+| Not yet solved | Original `+30pp` hosted RL target was not reached before Prime billing/auth blocked further runs |
 
-v0.2.52 adds `stage_candidate_relative_flow_frontier_native_tool`, the
-`action_gated_candidate_strict_frontier` reward, compact final tool outputs for
-one-shot candidate rollouts, and immutable native tool argument handling. It was
-pushed with wheel SHA
-`2178fc527952570a84d28e7d4917f64a795b0bb58a40c4cc606fddba16bf156a`.
+The full evidence trail is in the GitHub report:
+<https://github.com/setrf/megaminx-world-model-bench/blob/main/reports/megaminx-rl-report.md>.
 
-v0.2.53 adds `stage_candidate_relative_flow_rule_frontier_native_tool`, a fair
-counting-rule prompt over the same visible `+1/-1` flow tokens. It was pushed
-with wheel SHA
-`3e2815bb5fa1e28dfeb3501ed65b67de2dfcf3c2fc1b2e14278eef590eb43d95`.
+## Usage Recipes
 
-v0.2.54 adds `stage_candidate_relative_flow_rule_solve2_native_tool`, a
-two-call native `select_candidate` path for depth-2 solving. The best matched
-heldout checkpoint improved solved rate modestly, but did not meet the larger
-`+30pp` acceptance target.
-
-v0.2.55 hardens the tail-solve reward with
-`action_gated_candidate_path_tail_solve`, balances the refreshed second target
-slot, and produces READY checkpoint `o68kzy5up4e65ve6lktmkuat`. Canonical
-heldout probes for that checkpoint are blocked until Prime billing is restored.
-
-v0.2.56 fixes a remaining visible-row-id shortcut in the refreshed second-slot
-selection, caps non-solving second-step partial reward below `0.50`, and adds
-`scripts/export_oracle_trajectories.py` for deterministic two-call oracle JSONL.
-The audited 1,024-row seed-64 export solves every row, uses exactly two native
-`select_candidate` actions, has balanced slots/directions, uses stable
-turn-local tool-call ids, and reruns byte-identically with SHA256
-`1038afa6958030832c028840dafc22fc3724206461608e2ed809c90fa9695e7b`.
-
-## Validation
-
-Install the current Hub package:
+Install the environment:
 
 ```bash
 prime env install setrf/megaminx-solver@0.2.56 --plain
 ```
 
-Run local tests:
+No environment variables are required to import or load the environment. Hosted
+evals and training still require the normal Prime/model-provider credentials.
+
+From a checkout of the GitHub repository, smoke local tests:
 
 ```bash
 uv run pytest -q
 ```
 
-Latest result: `129 passed in 34.88s`.
-
-Export the deterministic v0.2.56 oracle warm-start corpus:
+From a checkout of the GitHub repository, create the current oracle dataset:
 
 ```bash
 uv run python scripts/export_oracle_trajectories.py \
@@ -266,138 +437,51 @@ uv run python scripts/export_oracle_trajectories.py \
   --seed 64 \
   --split train_candidate_relative_flow_rule_tail_solve_depth2 \
   --output /tmp/megaminx-oracle-v056-1024.jsonl
-uv run python scripts/summarize_oracle_trajectories.py /tmp/megaminx-oracle-v056-1024.jsonl
+```
+
+Convert and validate SFT data:
+
+```bash
 uv run python scripts/convert_oracle_to_sft_jsonl.py \
   /tmp/megaminx-oracle-v056-1024.jsonl \
   --output /tmp/megaminx-oracle-v056-1024-sft.jsonl
-uv run python scripts/validate_sft_jsonl.py /tmp/megaminx-oracle-v056-1024-sft.jsonl
-uv run python scripts/project_sft_to_openai_tools.py \
-  /tmp/megaminx-oracle-v056-1024-sft.jsonl \
-  --output /tmp/megaminx-oracle-v056-1024-sft-openai.jsonl
+
+uv run python scripts/validate_sft_jsonl.py \
+  /tmp/megaminx-oracle-v056-1024-sft.jsonl
+```
+
+Check readiness before hosted probes:
+
+```bash
 uv run python scripts/check_next_run_readiness.py
 ```
 
-Run the tracked tail-solve baseline and continuation configs when Prime billing
-allows hosted training:
+The next hosted probe sequence is documented at:
+<https://github.com/setrf/megaminx-world-model-bench/blob/main/reports/megaminx-next-run-runbook.md>.
 
-```bash
-prime train configs/rl/megaminx-v054-qwen9b-rule-flow-solve2-depth2-rpe16-complete6.toml --yes --plain
-prime train configs/rl/megaminx-v055-qwen9b-tail-solve-depth2-base-heldout-rpe16.toml --yes --plain
-prime train configs/rl/megaminx-v055-qwen9b-tail-solve-depth2-base-heldout2-rpe16.toml --yes --plain
-prime train configs/rl/megaminx-v055-qwen9b-tail-solve-depth2-lbuj-continue-b1024-lr1e9-rpe16.toml --yes --plain
-prime train configs/rl/megaminx-v056-qwen9b-tail-solve-depth2-base-heldout-rpe16.toml --yes --plain
-prime train configs/rl/megaminx-v056-qwen9b-tail-solve-depth2-base-heldout2-rpe16.toml --yes --plain
-prime train configs/rl/megaminx-v056-qwen9b-tail-solve-depth2-ckpt2-heldout-rpe16.toml --yes --plain
-prime train configs/rl/megaminx-v056-qwen9b-tail-solve-depth2-ckpt2-heldout2-rpe16.toml --yes --plain
-```
+## Known Caveats
 
-## Current Evidence
+- The environment is text-first. It models physical structure symbolically; it
+  does not yet render images or vision observations.
+- Some historical runs used scaffolded prompts to discover a learnable
+  curriculum. Use v0.2.56 for the current hardened lane.
+- Native Hosted Training and served evals measure different protocol surfaces.
+- Prime visibility checks still reported `PRIVATE` after public push attempts,
+  despite owner-auth installs and Hub package pushes succeeding.
+- Hosted run creation later hit billing/auth limits, so the prepared v0.2.56
+  matched heldout probes remain to be run.
 
-The v0.2.22 environment/prompt breakthrough moved 35B depth-1 direction solving
-from [`0.504`](https://app.primeintellect.ai/dashboard/evaluations/dgu4mymqqk5sy97l3kvusjxu)
-to [`0.929`](https://app.primeintellect.ai/dashboard/evaluations/vse6uoo8c9y156svyyv41qll).
+## Version Notes
 
-The v0.2.44-v0.2.46 candidate-scorecard ablation shows the current bridge from
-raw stickers toward learnable action selection:
-
-| Probe | Scaffold | Reward | Face | Note |
-| --- | --- | ---: | ---: | --- |
-| [`bf37hb72kaqha4fp1cein28q`](https://app.primeintellect.ai/dashboard/training/bf37hb72kaqha4fp1cein28q) | support + frontier | `0.9277` | `0.9145` | cracked scaffold |
-| [`qtkzn3gbi9alj12lbe7q6ijw`](https://app.primeintellect.ai/dashboard/training/qtkzn3gbi9alj12lbe7q6ijw) | support, no frontier | `0.8708` | `0.8498` | still strong |
-| [`etecohz0kxjx0hwpj06aoevq`](https://app.primeintellect.ai/dashboard/training/etecohz0kxjx0hwpj06aoevq) | affected-neighbor counts + masks only | `0.7336` | `0.7034` | train gate passed |
-
-An earlier v0.2.47 follow-up was
-[`pirt9kurev8d0okydmbo309d`](https://app.primeintellect.ai/dashboard/training/pirt9kurev8d0okydmbo309d),
-a stopped v0.2.47 frontier-equivalence train run. By step 4 it reached reward
-`0.5693` and direction `0.6582` with zero errors, producing checkpoint
-`ginimgkdx6okinz84klf0m98`, then drifted to `0.4865` by step 8. A heldout probe
-[`cto44tv6sqbkynjp2g01ggpw`](https://app.primeintellect.ai/dashboard/training/cto44tv6sqbkynjp2g01ggpw)
-measured the checkpoint at reward `0.5312`. The v0.2.47 baseline
-[`v6p7exy9p8h4vbek7ujvj86c`](https://app.primeintellect.ai/dashboard/training/v6p7exy9p8h4vbek7ujvj86c)
-reached reward `0.4620`, face `0.7817`, and action-frontier `0.1878`.
-The v0.2.46 hosted RL run
-[`hv6ljq5jlc8w391a0q38373l`](https://app.primeintellect.ai/dashboard/training/hv6ljq5jlc8w391a0q38373l)
-was stopped at step 4 after an unstable train signal.
-
-Leak audit: v0.2.47 is retained as scaffolded training history, not as a clean
-Megaminx-understanding claim. v0.2.50 is the clean lane. Its base run
-[`dbup76z9d460x4fbcfxw8yql`](https://app.primeintellect.ai/dashboard/training/dbup76z9d460x4fbcfxw8yql)
-reached reward `0.3031`, solved `0.0508`, native tool calls `1.0`, and zero
-errors. The clean hosted train run is
-[`dbs7pcyih846945xubanvdjr`](https://app.primeintellect.ai/dashboard/training/dbs7pcyih846945xubanvdjr).
-The v0.2.51 diagnostic baseline
-[`g8egyymgds47wtb4rbieyd20`](https://app.primeintellect.ai/dashboard/training/g8egyymgds47wtb4rbieyd20)
-confirmed the clean candidate set contains the inverse target face on every
-sample (`target_face_in_candidate_set=1.0`). The conservative v0.2.51 Qwen 9B
-training run is
-[`byzwnn49pt9ztm6xiw0jumkx`](https://app.primeintellect.ai/dashboard/training/byzwnn49pt9ztm6xiw0jumkx).
-It was stopped at step 4 because every row stayed below the v0.2.51 baseline
-and the old reward could be beaten by a fixed slot/direction policy. The next
-run is the v0.2.52 strict relative-flow baseline
-[`iwozt5azyroqtwkfztd47e6s`](https://app.primeintellect.ai/dashboard/training/iwozt5azyroqtwkfztd47e6s),
-which reached reward `0.5676`, solved `0.3048`, face `0.7677`, native tool
-calls `1.0`, and zero errors. The main v0.2.52 training run is
-[`hg24yiykjdrvounjsg6bd6si`](https://app.primeintellect.ai/dashboard/training/hg24yiykjdrvounjsg6bd6si).
-It was stopped at step 3 after online rewards `0.5557`, `0.5231`, `0.5459`,
-and `0.5325` stayed below the baseline; total cost was `$4.06`. Its checkpoint
-`lle93v210pcgw6kawfr2mr3e` is queued for a heldout probe when Prime marks it
-`READY`.
-The current clean comparison point is the v0.2.53 rule-flow baseline
-[`vxrolc00tg1h1yc8f96udnu9`](https://app.primeintellect.ai/dashboard/training/vxrolc00tg1h1yc8f96udnu9),
-which reached reward `0.6726`, solved `0.4033`, face `0.7644`, action-frontier
-`0.3178`, native tool calls `1.0`, and zero errors.
-The pure v0.2.53 no-eval training run
-[`vychxoaksf66c7pto4wz7rez`](https://app.primeintellect.ai/dashboard/training/vychxoaksf66c7pto4wz7rez)
-reached step-1 online reward `0.7133`, solved `0.4456`, face `0.8065`, and
-zero errors, then fell back to reward `0.6299` at step 2. It was stopped after
-step 2 with cost `$3.38`; no checkpoint was exposed through the CLI.
-The mixed v0.2.47/v0.2.53 teacher run
-[`vtg65yvig5fstip74awggpgn`](https://app.primeintellect.ai/dashboard/training/vtg65yvig5fstip74awggpgn)
-reached clean-lane reward `0.6820` at step 0, fell to `0.6338` at step 1, and
-was stopped with cost `$3.03`.
-The completed short v0.2.53 run
-[`f6ajk2cyut5om7qfb1qisz5e`](https://app.primeintellect.ai/dashboard/training/f6ajk2cyut5om7qfb1qisz5e)
-finished two steps naturally. Step 1 reached reward `0.7055`, solved `0.4083`,
-direction `0.7434`, and zero env/protocol/tool errors, with cost `$2.23`; no
-cloud checkpoint was exposed through `prime train checkpoints`.
-The depth-2-only Qwen 9B diagnostic
-[`ycx5aoe58lko3gvqyyto7794`](https://app.primeintellect.ai/dashboard/training/ycx5aoe58lko3gvqyyto7794)
-completed four steps with rewards `0.5483`, `0.4986`, `0.5019`, and `0.5412`.
-It kept native tool calls at `1.0` and env/protocol/tool errors at zero, but did
-not improve the depth-2 one-turn-frontier signal (`0.6973` at step 0 versus
-`0.6953` at step 3). Checkpoint `pxum4a0nnvfuq5jssm28qgwa` was still
-`UPLOADING` at the latest CLI poll; total cost was `$2.16`.
-v0.2.54 switches depth-2 from a one-shot frontier proxy to a two-call
-candidate-path solve. The Qwen 9B run
-[`bg0vbir6u6d521qcr8kghvvv`](https://app.primeintellect.ai/dashboard/training/bg0vbir6u6d521qcr8kghvvv)
-completed six steps and reached final online reward `0.7335`, solved `0.6615`,
-two native tool calls, and zero errors; cost was `$7.70`. Its READY step-3
-checkpoint `ce4skj0ockwhx4zq7ztutsap` was probed on the heldout depth-2 split:
-base run
-[`xx4pql9agtfl2se7046brmio`](https://app.primeintellect.ai/dashboard/training/xx4pql9agtfl2se7046brmio)
-scored reward `0.6335`, solved `0.5625`, while checkpoint probe
-[`k2j8tjj7gra5ukmzmrff9epu`](https://app.primeintellect.ai/dashboard/training/k2j8tjj7gra5ukmzmrff9epu)
-scored reward `0.6282`, solved `0.5746`. This is a partial heldout solved-rate
-gain, not yet a clean reward win.
-The checkpoint-tail-room run
-[`junxsn2n4rz3uvkcl88ru2in`](https://app.primeintellect.ai/dashboard/training/junxsn2n4rz3uvkcl88ru2in)
-then produced READY checkpoint `lbujflb1zyzv764lh9dhzu3s` at step 2. Its
-heldout probe
-[`j4y1xf2i6cg3lw40m8e3yom9`](https://app.primeintellect.ai/dashboard/training/j4y1xf2i6cg3lw40m8e3yom9)
-scored reward `0.6631`, solved `0.6048`, two native tool calls, and zero
-errors, a clean `+2.96pp` reward / `+4.23pp` solved-rate improvement over the
-heldout base.
-A second heldout seed was also positive but much smaller: base
-[`lj8g10rkj4haatuhq1iqxqzn`](https://app.primeintellect.ai/dashboard/training/lj8g10rkj4haatuhq1iqxqzn)
-scored reward `0.6707`, solved `0.5723`; checkpoint probe
-[`jiwkc1h58uwyeiyc8z7pnka9`](https://app.primeintellect.ai/dashboard/training/jiwkc1h58uwyeiyc8z7pnka9)
-scored reward `0.6712`, solved `0.5801`, with zero errors.
-
-## Hub Caveat
-
-`prime env push megaminx-solver --path ./environments --owner setrf --visibility PUBLIC --plain`
-successfully pushes versions, but the existing Hub record still reports
-`PRIVATE` through `prime env status` and `prime env list`. Flip visibility in the
-owner web UI for environment id `ozde27sytxjkc3wm83zv4e2c`; do not delete and
-recreate the environment unless losing version/eval/training continuity is
-acceptable.
+| Version | Main change |
+| --- | --- |
+| v0.2.21 | Direction-flow depth-1 eval exposed the face/direction inversion trap. |
+| v0.2.22 | Candidate solving-action framing reached `0.929` solved with 35B on heldout depth-1. |
+| v0.2.28 | Native Hosted Training/TITO lane produced clean native tool-call probes. |
+| v0.2.47 | Candidate mask frontier-equivalence lane showed native checkpoint movement but exposed scaffold risk. |
+| v0.2.50 | Clean geometry candidate lane removed public mask reward proxies. |
+| v0.2.52 | Candidate-relative flow tokens replaced heavier scorecards. |
+| v0.2.53 | Rule-flow prompt added an explicit fair counting rule. |
+| v0.2.54 | Two-call depth-2 candidate path solved after refreshed observations. |
+| v0.2.55 | Tail-solve reward hardening and balanced second-step targets. |
+| v0.2.56 | Visible-id shortcut fix, second-step reward cap, deterministic oracle export, SFT warm-start path. |
